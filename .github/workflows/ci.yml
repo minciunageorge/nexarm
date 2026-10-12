@@ -1,0 +1,21 @@
+name: Validate framework
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  framework:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m unittest discover -s tests -v
+      - run: for script in deploy/*.sh; do bash -n "$script"; done
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build ARM64 image
+        run: docker buildx build --platform linux/arm64 --load -t nexarm:ci .
+      - name: ROS2 and synthetic camera integration test
+        run: |
+          docker run --rm -i --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 --tmpfs /tmp --tmpfs /results:uid=1000,gid=1000 nexarm:ci python3 < tests/ros_runtime.py
