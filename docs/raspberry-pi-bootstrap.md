@@ -1,5 +1,9 @@
 # One-time bootstrap: preserve the running Raspberry Pi
 
+For the final laptop-independent setup, use [unattended operation](unattended-operation.md),
+which replaces the manual tunnel below with a Pi-owned boot service and relay.
+The manual LAN procedure remains useful for initial access and diagnostics.
+
 Target: `pi@192.168.100.153`, Raspberry Pi 5, existing running container `nexarm`.
 Run this procedure **on your trusted Linux/macOS laptop or runner with LAN access**,
 from a copy of this updated repository. The supplied bootstrap archive can be

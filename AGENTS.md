@@ -16,3 +16,10 @@ Build the Docker image and run `tests/ros_runtime.py` inside the restricted
 container as documented in README.md for runtime changes. These checks use
 synthetic ROS images and do not validate physical robot/camera behavior.
 Report ARM64, Pi connectivity and hardware checks as untested unless executed.
+
+The final transport is a Pi-owned systemd reverse SSH connection to an always-on
+relay; see docs/unattended-operation.md. No relay has been provisioned or Pi
+service activated yet. Routine unattended collection uses the read-only GitHub
+workflow, never robot deployment/camera execution. Verify GitHub Actions API
+capability and bindings before claiming ChatGPT can dispatch/download results.
+Never treat Git proxy authentication as Actions API or native SSH access.

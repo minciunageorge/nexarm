@@ -10,7 +10,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def ssh_command(host, port, identity, operation, revision='', replace=False, network='none', container_paths=()):
+def ssh_command(host, port, identity, operation, revision='', replace=False, network='none', container_paths=(), ssh_config=None):
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', host):
         raise ValueError('Host must be a hostname or IPv4 address, without user, scheme or options')
     if not 1 <= port <= 65535:
@@ -21,6 +21,8 @@ def ssh_command(host, port, identity, operation, revision='', replace=False, net
     command = ['ssh', '-T', '-p', str(port), '-o', 'BatchMode=yes', '-o',
                'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10', '-o',
                'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3']
+    if ssh_config:
+        command += ['-F', str(ssh_config)]
     if identity:
         command += ['-i', identity]
     remote = ['bash', '-c', (ROOT / 'deploy/remote.sh').read_text(), 'nexarm',
@@ -34,6 +36,7 @@ def main():
     parser.add_argument('--host', required=True)
     parser.add_argument('--port', type=int, default=22)
     parser.add_argument('--identity')
+    parser.add_argument('--ssh-config', type=Path, help='Dedicated SSH config; preserves global user settings')
     parser.add_argument('--apply', action='store_true', help='Required for deploy/rollback/camera')
     parser.add_argument('--replace-managed', action='store_true')
     parser.add_argument('--ros-network', choices=['none', 'host'], default='none')
@@ -52,7 +55,7 @@ def main():
             parser.error('Commit changes first: deployment requires a clean working tree')
         revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     command = ssh_command(args.host, args.port, args.identity, args.operation, revision,
-                          args.replace_managed, args.ros_network, args.container_path)
+                          args.replace_managed, args.ros_network, args.container_path, args.ssh_config)
     if args.operation in ('deploy', 'rollback', 'camera') and not args.apply:
         print(f'Dry run: {args.operation} to pi@{args.host}:{args.port}; network={args.ros_network}; revision/topic={revision}')
         print('No remote command executed. Add --apply to proceed.')
@@ -75,7 +78,7 @@ def main():
     (args.output_dir / f'{stamp}-{args.operation}.log').write_bytes(result.stdout)
     print(result.stdout.decode(errors='replace'), end='')
     if args.operation in ('deploy', 'rollback', 'camera'):
-        collect = ssh_command(args.host, args.port, args.identity, 'collect')
+        collect = ssh_command(args.host, args.port, args.identity, 'collect', ssh_config=args.ssh_config)
         archive = args.output_dir / f'{stamp}-results.tar.gz'
         with archive.open('xb') as output:
             gathered = subprocess.run(collect, stdout=output)

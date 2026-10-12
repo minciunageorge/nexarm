@@ -4,6 +4,9 @@ Development and deployment scaffold for a **64-bit Raspberry Pi 5**, SSH user
 `pi`, and Docker container `nexarm` running **ROS2 Humble / Ubuntu 22.04**.
 The repository initially contains no robot packages or hardware configuration.
 
+For laptop-independent unattended operation, follow
+[the Pi-owned tunnel and GitHub automation architecture](docs/unattended-operation.md).
+
 For the real Pi with an already-running container, follow
 [the preservation bootstrap procedure](docs/raspberry-pi-bootstrap.md). Use
 `collect-existing` for read-only collection; the deployment examples below apply

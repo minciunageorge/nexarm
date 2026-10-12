@@ -1,0 +1,77 @@
+name: Robot read-only collection
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Read-only operation; deployment and capture are intentionally unavailable
+        type: choice
+        required: true
+        default: collect-existing
+        options: [probe, discover-existing, collect-existing]
+      container_paths:
+        description: JSON array of verified existing result paths; collection only
+        required: false
+        default: '[]'
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: robot-readonly
+  cancel-in-progress: false
+jobs:
+  collect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: robot-readonly
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare ephemeral SSH credentials
+        env:
+          NEXARM_RELAY_HOST: ${{ vars.NEXARM_RELAY_HOST }}
+          NEXARM_RELAY_PORT: ${{ vars.NEXARM_RELAY_PORT }}
+          NEXARM_REVERSE_PORT: ${{ vars.NEXARM_REVERSE_PORT }}
+          NEXARM_RELAY_HOST_KEY: ${{ vars.NEXARM_RELAY_HOST_KEY }}
+          NEXARM_PI_HOST_KEY: ${{ vars.NEXARM_PI_HOST_KEY }}
+          NEXARM_RELAY_OPERATOR_KEY: ${{ secrets.NEXARM_RELAY_OPERATOR_KEY }}
+          NEXARM_PI_OPERATOR_KEY: ${{ secrets.NEXARM_PI_OPERATOR_KEY }}
+        run: python3 tools/prepare_actions_access.py --ssh-dir "$RUNNER_TEMP/nexarm-ssh"
+      - name: Run selected read-only operation
+        env:
+          OPERATION: ${{ inputs.operation }}
+          CONTAINER_PATHS: ${{ inputs.container_paths }}
+          REVERSE_PORT: ${{ vars.NEXARM_REVERSE_PORT }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          operation = os.environ['OPERATION']
+          if operation not in ('probe', 'discover-existing', 'collect-existing'):
+              raise SystemExit('Unsupported operation')
+          paths = json.loads(os.environ['CONTAINER_PATHS'])
+          if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+              raise SystemExit('container_paths must be a JSON array of strings')
+          if paths and operation != 'collect-existing':
+              raise SystemExit('Paths only supported for collection')
+          artifacts = pathlib.Path('artifacts'); artifacts.mkdir(exist_ok=True)
+          command = ['python3', 'tools/nexarm.py', operation, '--host', 'nexarm-robot',
+                     '--port', os.environ['REVERSE_PORT'] or '2222', '--ssh-config',
+                     str(pathlib.Path(os.environ['RUNNER_TEMP']) / 'nexarm-ssh/runner.conf')]
+          for path in paths:
+              command += ['--container-path', path]
+          with (artifacts / 'operation.log').open('wb') as output:
+              result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT)
+          raise SystemExit(result.returncode)
+          PY
+      - name: Retain logs and collection archive, including failed-run diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexarm-readonly-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Remove ephemeral SSH keys
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/nexarm-ssh"
