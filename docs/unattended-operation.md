@@ -1,4 +1,7 @@
-# Unattended operation with the laptop offline
+# Alternative: VPS relay with the laptop offline
+
+The preferred architecture is now the [Pi-hosted ARM64 runner](pi-self-hosted-runner.md).
+This relay design remains available but unactivated.
 
 The recommended architecture is a small **Ubuntu 24.04 VPS with a stable public
 hostname/IP**, used only as an SSH relay, plus GitHub-hosted Actions jobs for

@@ -1,0 +1,40 @@
+name: Pi read-only collection
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Fixed read-only broker operation; deployment and camera capture unavailable
+        type: choice
+        required: true
+        default: collect-existing
+        options: [probe, discover-existing, collect-existing]
+permissions:
+  contents: read
+concurrency:
+  group: pi-readonly
+  cancel-in-progress: false
+jobs:
+  collect:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    environment: pi-readonly
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # verified v4
+        with:
+          persist-credentials: false
+      - name: Run the installed read-only broker
+        env:
+          OPERATION: ${{ inputs.operation }}
+        run: python3 tools/pi_runner_job.py "$OPERATION"
+      - name: Upload existing results and failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # verified v4
+        with:
+          name: nexarm-pi-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Remove job result files
+        if: always()
+        run: rm -rf -- artifacts

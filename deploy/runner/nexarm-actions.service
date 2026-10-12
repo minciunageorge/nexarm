@@ -1,0 +1,35 @@
+[Unit]
+Description=Nexarm GitHub ARM64 read-only runner (no deployment)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+User=nexarm-runner
+Group=nexarm-runner
+WorkingDirectory=/var/lib/nexarm-runner/actions-runner
+ExecStart=/var/lib/nexarm-runner/actions-runner/run.sh
+Restart=always
+RestartSec=15
+KillMode=control-group
+TimeoutStopSec=60
+UMask=0077
+StandardInput=null
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/nexarm-runner
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# sudo to the fixed read-only broker must remain possible; see the security guide.
+NoNewPrivileges=no
+TasksMax=128
+MemoryMax=512M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

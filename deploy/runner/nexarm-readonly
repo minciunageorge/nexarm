@@ -1,0 +1,3 @@
+#!/bin/sh
+# -I ignores caller PYTHONPATH/site packages; root-owned code only.
+exec /usr/bin/python3 -I /usr/local/lib/nexarm-runner/readonly.py "$@"

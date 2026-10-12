@@ -17,9 +17,12 @@ container as documented in README.md for runtime changes. These checks use
 synthetic ROS images and do not validate physical robot/camera behavior.
 Report ARM64, Pi connectivity and hardware checks as untested unless executed.
 
-The final transport is a Pi-owned systemd reverse SSH connection to an always-on
-relay; see docs/unattended-operation.md. No relay has been provisioned or Pi
-service activated yet. Routine unattended collection uses the read-only GitHub
-workflow, never robot deployment/camera execution. Verify GitHub Actions API
-capability and bindings before claiming ChatGPT can dispatch/download results.
-Never treat Git proxy authentication as Actions API or native SSH access.
+The preferred transport is now a dedicated ARM64 self-hosted GitHub runner on the
+Pi with NO Docker/sudo-group membership, plus a root-owned read-only broker; see
+docs/pi-self-hosted-runner.md. The VPS relay is an inactive alternative. No Pi
+runner, broker or service has been installed/activated. Existing nexarm must stay
+unchanged. Routine jobs permit only probe/discovery/collection; deployment,
+container exec, new camera capture and motion remain disabled. Do not register a
+robot-hosted runner to a public/untrusted repository. Verify Actions API binding
+before claiming ChatGPT can dispatch/download results; Git proxy auth is not API
+access. Do not run untrusted tests on the robot or relax the broker during setup.
