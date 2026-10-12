@@ -41,6 +41,16 @@ class FrameworkTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 cli.ssh_command(host, 22, None, 'probe')
 
+    def test_collection_paths_are_quoted_and_validated(self):
+        import shlex
+        cli = load('nexarm')
+        path = '/saved camera;results'
+        command = cli.ssh_command('127.0.0.1', 2222, None, 'collect-existing', container_paths=[path])
+        self.assertEqual(shlex.split(command[-1])[-1], path)
+        for path in ['/', 'relative', '/tmp/../etc', '/tmp/evil\nname']:
+            with self.assertRaises(ValueError):
+                cli.ssh_command('pi.local', 22, None, 'collect-existing', container_paths=[path])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -5,6 +5,12 @@ revision=${2:-}
 replace=${3:-no}
 network=${4:-none}
 base="$HOME/.local/share/nexarm"
+assert_unprotected() {
+  [[ ! -e $base/protect-existing ]] || {
+    echo 'Existing nexarm is protected: deployment, rollback and camera execution are disabled. Use collect-existing.' >&2
+    exit 1
+  }
+}
 managed() { [[ $(docker inspect -f '{{index .Config.Labels "org.nexarm.managed"}}' nexarm) == true ]]; }
 exists() { docker inspect nexarm >/dev/null 2>&1; }
 run_image() {
@@ -14,9 +20,11 @@ case "$operation" in
 probe)
   [[ $(uname -m) == aarch64 ]] || { echo 'A 64-bit ARM OS is required' >&2; exit 1; }
   docker info --format '{{.OSType}}/{{.Architecture}}'
+  if [[ -e $base/protect-existing ]]; then echo 'Protection guard active'; fi
   if exists; then docker inspect -f 'Existing nexarm managed={{index .Config.Labels "org.nexarm.managed"}}' nexarm; fi
   ;;
 deploy|rollback)
+  assert_unprotected
   [[ $network == none || $network == host ]]
   [[ $(uname -m) == aarch64 ]]
   docker info >/dev/null
@@ -62,6 +70,29 @@ deploy|rollback)
   success=yes
   if [[ -n $old ]]; then printf '%s\n' "$old" >"$base/previous-image"; docker rm nexarm-rollback >/dev/null; fi
   ;;
+discover-existing)
+  # Only selected path-related metadata. Never dump .Config.Env or credentials.
+  docker inspect -f 'user={{.Config.User}} workdir={{.Config.WorkingDir}}{{println}}{{range .Config.Env}}{{if ge (len .) 12}}{{if eq (slice . 0 12) "ROS_LOG_DIR="}}{{println .}}{{end}}{{end}}{{if ge (len .) 5}}{{if eq (slice . 0 5) "HOME="}}{{println .}}{{end}}{{end}}{{end}}' nexarm
+  docker inspect -f '{{range .Mounts}}{{println "mount" .Type "source=" .Source "container=" .Destination}}{{end}}' nexarm
+  ;;
+collect-existing)
+  # Read only Docker API operations; never exec, stop, relabel or write in nexarm.
+  temp=$(mktemp -d)
+  trap 'rm -rf "$temp"' EXIT
+  docker inspect -f 'id={{.Id}} image={{.Image}} running={{.State.Running}} started={{.State.StartedAt}}' nexarm >"$temp/status.txt"
+  docker logs --timestamps --since 24h --tail 5000 nexarm >"$temp/container.log" 2>&1
+  shift 4
+  index=0
+  for path in "$@"; do
+    [[ $path == /* && $path != / && $path != *$'\n'* && $path != *$'\r'* ]] || { echo 'Invalid artifact path' >&2; exit 2; }
+    case "/${path#/}/" in */../*) echo 'Path traversal rejected' >&2; exit 2;; esac
+    index=$((index+1))
+    printf 'path-%s\t%s\n' "$index" "$path" >>"$temp/paths.tsv"
+    # docker cp reads the source; does not follow source symlinks with -L.
+    docker cp "nexarm:$path" "$temp/path-$index"
+  done
+  tar -czf - -C "$temp" .
+  ;;
 collect)
   managed || { echo 'Container is not managed by nexarm' >&2; exit 1; }
   temp=$(mktemp -d)
@@ -74,6 +105,7 @@ collect)
   tar -czf - -C "$temp" .
   ;;
 camera)
+  assert_unprotected
   managed
   docker exec nexarm /opt/nexarm/entrypoint.sh python3 /opt/nexarm/camera_capture.py --topic "$revision" --output /results/camera/latest.ppm
   ;;

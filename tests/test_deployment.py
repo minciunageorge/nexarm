@@ -39,7 +39,7 @@ else: sys.exit(2)
 
 
 class DeploymentTests(unittest.TestCase):
-    def execute(self, managed=True, fail_build=False, fail_smoke=False):
+    def execute(self, managed=True, fail_build=False, fail_smoke=False, protected=False, operation='deploy'):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             state = root / 'state.json'
@@ -48,11 +48,15 @@ class DeploymentTests(unittest.TestCase):
             docker = root / 'docker'; docker.write_text(FAKE_DOCKER); docker.chmod(0o755)
             uname = root / 'uname'; uname.write_text('#!/bin/sh\necho aarch64\n'); uname.chmod(0o755)
             env = dict(os.environ, HOME=str(root), PATH=f'{root}:{os.environ["PATH"]}', FAKE_STATE=str(state))
+            if protected:
+                guard = root / '.local/share/nexarm/protect-existing'
+                guard.parent.mkdir(parents=True)
+                guard.write_text('protected-id\n')
             if fail_build: env['FAIL_BUILD'] = '1'
             if fail_smoke: env['FAIL_SMOKE'] = '1'
             payload = io.BytesIO()
             with tarfile.open(fileobj=payload, mode='w'): pass
-            result = subprocess.run(['bash', str(ROOT / 'deploy/remote.sh'), 'deploy', 'a'*40, 'yes', 'none'],
+            result = subprocess.run(['bash', str(ROOT / 'deploy/remote.sh'), operation, 'a'*40, 'yes', 'none'],
                                     input=payload.getvalue(), env=env, capture_output=True)
             final = json.loads(state.read_text())
             previous = root / '.local/share/nexarm/previous-image'
@@ -81,3 +85,12 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(set(final), {'nexarm'})
         self.assertEqual(final['nexarm']['image'], 'nexarm:'+'a'*40)
         self.assertEqual(previous, 'sha256:old\n')
+
+    def test_guard_blocks_even_managed_container(self):
+        for operation in ('deploy', 'rollback', 'camera'):
+            with self.subTest(operation=operation):
+                result, final, old, previous = self.execute(protected=True, operation=operation)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b'protected', result.stderr)
+                self.assertEqual(final, {'nexarm': old})
+                self.assertIsNone(previous)
