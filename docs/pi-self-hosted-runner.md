@@ -90,6 +90,9 @@ a serious risk on a robot host. Use a different host for untrusted tests/builds.
 
 ## One-time activation procedure (prepared, not executed)
 
+The [single-file activation procedure](activate-pi-runner.md) automates the
+Pi-side steps below with local prompts; the detailed steps remain for review.
+
 1. Use the existing trusted LAN SSH access as pi to transfer this updated bundle
    into a new host directory. No files go into the container. Confirm `uname -m`
    is `aarch64` and the OS is currently supported by GitHub's Linux ARM64 runner.

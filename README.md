@@ -4,6 +4,9 @@ Development and deployment scaffold for a **64-bit Raspberry Pi 5**, SSH user
 `pi`, and Docker container `nexarm` running **ROS2 Humble / Ubuntu 22.04**.
 The repository initially contains no robot packages or hardware configuration.
 
+For one-command activation from your existing pi SSH session, see
+[the minimal activation procedure](docs/activate-pi-runner.md).
+
 For laptop-independent unattended operation, the preferred simpler architecture is
 [the Pi-hosted ARM64 runner with a read-only broker](docs/pi-self-hosted-runner.md).
 The [VPS relay architecture](docs/unattended-operation.md) remains an inactive alternative.

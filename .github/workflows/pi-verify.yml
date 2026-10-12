@@ -1,0 +1,31 @@
+name: Pi harmless verification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pi-readonly
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    environment: pi-readonly
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Report system and verify approved read-only diagnostics
+        run: python3 tools/verify_pi_runner.py
+      - name: Retain verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexarm-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Remove collected job files
+        if: always()
+        run: rm -rf -- artifacts

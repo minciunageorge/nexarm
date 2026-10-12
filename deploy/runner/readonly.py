@@ -47,7 +47,7 @@ def execute(operation, config):
     if current != identifier:
         raise ValueError('Container identity changed; administrator review required')
     if operation == 'probe':
-        sys.stdout.buffer.write(docker(['inspect', '-f', 'id={{.Id}} running={{.State.Running}} image={{.Image}}', identifier]))
+        sys.stdout.buffer.write(docker(['inspect', '-f', 'id={{.Id}} running={{.State.Running}} image={{.Image}} started={{.State.StartedAt}}', identifier]))
     elif operation == 'discover-existing':
         template = 'user={{.Config.User}} workdir={{.Config.WorkingDir}}{{println}}{{range .Config.Env}}{{if ge (len .) 12}}{{if eq (slice . 0 12) "ROS_LOG_DIR="}}{{println .}}{{end}}{{end}}{{if ge (len .) 5}}{{if eq (slice . 0 5) "HOME="}}{{println .}}{{end}}{{end}}{{end}}'
         sys.stdout.buffer.write(docker(['inspect', '-f', template, identifier]))
@@ -55,7 +55,7 @@ def execute(operation, config):
     else:
         with tempfile.TemporaryDirectory(prefix='nexarm-readonly-') as temporary:
             root = Path(temporary)
-            (root / 'status.txt').write_bytes(docker(['inspect', '-f', 'id={{.Id}} running={{.State.Running}} image={{.Image}}', identifier]))
+            (root / 'status.txt').write_bytes(docker(['inspect', '-f', 'id={{.Id}} running={{.State.Running}} image={{.Image}} started={{.State.StartedAt}}', identifier]))
             command = [DOCKER, '--host', 'unix:///var/run/docker.sock', 'logs', '--timestamps', '--since', '24h', '--tail', '5000', identifier]
             with (root / 'container.log').open('wb') as logs:
                 subprocess.run(command, stdout=logs, stderr=subprocess.STDOUT, timeout=120, check=True,
