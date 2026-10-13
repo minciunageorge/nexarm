@@ -1,1 +1,1 @@
-ros-inspect trigger 2026-10-13
+ros-inspect QoS check 2026-10-13 23:15 Europe/Bucharest
