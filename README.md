@@ -1,7 +1,7 @@
 # nexarm
 
 [Issue #1: fixed ROS2 and Aurora diagnostics](docs/ros-aurora-diagnostics.md)
-adds fixed graph inspection and one-frame capture. Pi workflows run manually on main;
+adds fixed graph inspection, one-frame capture and RGB/depth/IR health counters. Pi workflows run manually on main;
 public repository operation is supported without a metadata token.
 
 Development and deployment scaffold for a **64-bit Raspberry Pi 5**, SSH user

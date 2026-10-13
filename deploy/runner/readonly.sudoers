@@ -1,2 +1,2 @@
 Defaults:nexarm-runner env_reset
-nexarm-runner ALL=(root) NOPASSWD: /usr/local/sbin/nexarm-readonly probe, /usr/local/sbin/nexarm-readonly discover-existing, /usr/local/sbin/nexarm-readonly collect-existing, /usr/local/sbin/nexarm-readonly ros-inspect, /usr/local/sbin/nexarm-readonly camera-one-frame
+nexarm-runner ALL=(root) NOPASSWD: /usr/local/sbin/nexarm-readonly probe, /usr/local/sbin/nexarm-readonly discover-existing, /usr/local/sbin/nexarm-readonly collect-existing, /usr/local/sbin/nexarm-readonly ros-inspect, /usr/local/sbin/nexarm-readonly camera-one-frame, /usr/local/sbin/nexarm-readonly aurora-health

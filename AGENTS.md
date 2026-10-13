@@ -29,10 +29,14 @@ workflows may target the Pi. Verify Actions API binding
 before claiming ChatGPT can dispatch/download results; Git proxy auth is not API
 access. Do not run untrusted tests on the robot or relax the broker during setup.
 
-Issue #1 explicitly authorizes the two fixed root-installed diagnostics
+Issue #1 explicitly authorizes the fixed root-installed diagnostics
 ros-inspect and camera-one-frame (Aurora /depth_cam/rgb/image_raw, 640x400).
 It does not authorize arbitrary exec, motion, deployment or hardware changes.
 The latest issue #1 owner comment explicitly permits public repository operation.
 Do not require a visibility change or metadata token. Keep manual main-only jobs,
 root-owned enrollment and fixed broker scope. Do not execute untrusted PR/fork
 jobs on the Pi. Cloud code must not activate or modify the live Pi.
+
+The user also authorizes aurora-health: fixed RGB/depth/IR observer callback
+counters and header timestamps, with bounded reliable/best-effort readers.
+No USB/device changes, package installation, driver launch or motion is authorized.

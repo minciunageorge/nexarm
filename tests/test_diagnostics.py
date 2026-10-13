@@ -17,16 +17,16 @@ broker=load('readonly')
 class DiagnosticsTests(unittest.TestCase):
  def test_unenrolled_diagnostics_prevent_any_docker_call(self):
   with patch.object(broker,'docker') as docker:
-   for operation in ['ros-inspect','camera-one-frame']:
+   for operation in ['ros-inspect','camera-one-frame','aurora-health']:
     for enabled in [None,False,'true']:
      with self.assertRaises(ValueError):broker.execute(operation,{'container_id':'a'*64,'diagnostics_enabled':enabled})
    docker.assert_not_called()
 
  def test_enrolled_diagnostics_do_not_require_visibility_or_token(self):
   with patch.object(broker,'docker',return_value=b'a'*64),patch.object(broker,'observe') as observe:
-   for operation in ['ros-inspect','camera-one-frame']:
+   for operation in ['ros-inspect','camera-one-frame','aurora-health']:
     broker.execute(operation,{'container_id':'a'*64,'diagnostics_enabled':True})
-   self.assertEqual(observe.call_count,2)
+   self.assertEqual(observe.call_count,3)
 
  def test_camera_exec_is_fixed_nonroot_and_output_is_validated(self):
   pixels=b'\x01\x02\x03'*(640*400)
@@ -138,3 +138,26 @@ class DiagnosticsTests(unittest.TestCase):
   upgrade=load('upgrade_diagnostics')
   for name in ['readonly.py','container_diagnostics.py']:
    upgrade.require_known_file(name,(ROOT/'tests/fixtures'/('diagnostics-qos-'+name)).read_bytes(),(ROOT/'deploy/runner'/name).read_bytes())
+
+ def test_previous_delivery_files_can_upgrade_to_health(self):
+  upgrade=load('upgrade_diagnostics')
+  for name in ['readonly.py','readonly.sudoers','container_diagnostics.py']:
+   upgrade.require_known_file(name,(ROOT/'tests/fixtures'/('diagnostics-delivery-'+name)).read_bytes(),(ROOT/'deploy/runner'/name).read_bytes())
+
+ def test_health_broker_rejects_unapproved_topics(self):
+  def execute(command,**kwargs):
+   self.assertEqual(command[-1],'aurora-health')
+   kwargs['stdout'].write(json.dumps({'operation':'aurora-health','streams':{'rgb':{'topic':'/other'},'depth':{'topic':'/depth_cam/depth/image_raw'},'ir':{'topic':'/depth_cam/ir/image_raw'}}}).encode())
+   return subprocess.CompletedProcess(command,0)
+  with patch.object(broker.subprocess,'run',side_effect=execute):
+   with self.assertRaisesRegex(ValueError,'Unexpected Aurora health topic'):broker.observe('aurora-health','a'*64)
+
+ def test_health_is_narrowly_authorized_in_sudoers_and_workflow(self):
+  policy=(ROOT/'deploy/runner/readonly.sudoers').read_text()
+  self.assertIn('/usr/local/sbin/nexarm-readonly aurora-health',policy)
+  self.assertNotIn('*',policy)
+  self.assertNotIn('NOPASSWD: ALL',policy)
+  workflow=(ROOT/'.github/workflows/pi-diagnostics.yml').read_text()
+  self.assertIn('options: [ros-inspect, camera-one-frame, aurora-health]',workflow)
+  self.assertIn("'.nexarm/aurora-trigger.txt'",workflow)
+  self.assertNotIn('pull_request',workflow)

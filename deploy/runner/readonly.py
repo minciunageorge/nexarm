@@ -13,7 +13,7 @@ import tempfile
 
 CONFIG = Path('/etc/nexarm-runner/readonly.json')
 DOCKER = '/usr/bin/docker'
-OPERATIONS = ('probe', 'discover-existing', 'collect-existing', 'ros-inspect', 'camera-one-frame')
+OPERATIONS = ('probe', 'discover-existing', 'collect-existing', 'ros-inspect', 'camera-one-frame', 'aurora-health')
 
 
 def validate(config):
@@ -103,7 +103,15 @@ def observe(operation, identifier):
         output.seek(0); data=output.read(4*1024*1024+1)
     if len(data)>4*1024*1024: raise ValueError('Observer output limit exceeded')
     result=json.loads(data)
-    if operation=='ros-inspect':
+    if operation=='aurora-health':
+        expected={'rgb':'/depth_cam/rgb/image_raw','depth':'/depth_cam/depth/image_raw','ir':'/depth_cam/ir/image_raw'}
+        streams=result.get('streams')
+        if result.get('operation')!='aurora-health' or not isinstance(streams,dict) or set(streams)!=set(expected):
+            raise ValueError('Malformed Aurora health result')
+        if any(not isinstance(streams[name],dict) or streams[name].get('topic')!=topic for name,topic in expected.items()):
+            raise ValueError('Unexpected Aurora health topic')
+        print(json.dumps(result))
+    elif operation=='ros-inspect':
         if not isinstance(result.get('nodes'),list) or not isinstance(result.get('topics'),list):
             raise ValueError('Malformed ROS graph result')
         if len(result['nodes'])>200 or len(result['topics'])>200: raise ValueError('Graph limit exceeded')
@@ -124,13 +132,13 @@ def observe(operation, identifier):
 def execute(operation, config):
     if operation not in OPERATIONS:
         raise ValueError('Only read-only operations are enabled')
-    if operation in ('ros-inspect', 'camera-one-frame') and config.get('diagnostics_enabled') is not True:
+    if operation in ('ros-inspect', 'camera-one-frame', 'aurora-health') and config.get('diagnostics_enabled') is not True:
         raise ValueError('ROS/camera diagnostics are not enrolled')
     identifier, paths = validate(config)
     current = docker(['inspect', '-f', '{{.Id}}', 'nexarm']).decode().strip()
     if current != identifier:
         raise ValueError('Container identity changed; administrator review required')
-    if operation in ('ros-inspect','camera-one-frame'):
+    if operation in ('ros-inspect','camera-one-frame','aurora-health'):
         before=docker(['inspect','-f','{{.Id}} {{.State.Running}} {{.State.StartedAt}}',identifier])
         observe(operation,identifier)
         if before!=docker(['inspect','-f','{{.Id}} {{.State.Running}} {{.State.StartedAt}}',identifier]):

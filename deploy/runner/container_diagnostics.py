@@ -74,12 +74,82 @@ def camera_publishers():
             'fallback_requested_qos': describe_qos(FALLBACK_QOS)}
 
 
+HEALTH_TOPICS = {'rgb': RGB_TOPIC, 'depth': '/depth_cam/depth/image_raw',
+                 'ir': '/depth_cam/ir/image_raw'}
+
+
+def aurora_health():
+    # Only these three exact Image topics. No parameters, launch, USB/device
+    # queries, driver counters or actuator publishers. Image pixels are discarded.
+    streams = {}
+    subscriptions = []
+    started = time.monotonic()
+    try:
+        for channel, topic in HEALTH_TOPICS.items():
+            readers = []
+            streams[channel] = {'topic': topic, 'readers': readers}
+            for reliability in (ReliabilityPolicy.RELIABLE, ReliabilityPolicy.BEST_EFFORT):
+                stats = {'reliability': reliability.name, 'durability': 'VOLATILE',
+                         'messages_received': 0, 'first_stamp': None, 'last_stamp': None,
+                         'stamp_advances': 0, 'stamp_repeats': 0, 'stamp_regressions': 0,
+                         'first_arrival_ms': None, 'last_arrival_ms': None,
+                         'max_matched_publishers': 0, 'matched_publishers': 0}
+                readers.append(stats)
+                def receive(message, stats=stats):
+                    stamp = [message.header.stamp.sec, message.header.stamp.nanosec]
+                    arrival = round((time.monotonic()-started)*1000)
+                    if stats['messages_received']:
+                        previous = stats['last_stamp']
+                        field = 'stamp_advances' if stamp > previous else 'stamp_repeats' if stamp == previous else 'stamp_regressions'
+                        stats[field] += 1
+                    else:
+                        stats['first_stamp'] = stamp
+                        stats['first_arrival_ms'] = arrival
+                    stats['messages_received'] += 1
+                    stats['last_stamp'] = stamp
+                    stats['last_arrival_ms'] = arrival
+                qos = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=1,
+                                 reliability=reliability, durability=DurabilityPolicy.VOLATILE)
+                subscription = node.create_subscription(Image, topic, receive, qos)
+                subscriptions.append((subscription, stats))
+        deadline = started+10
+        while time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.1)
+            for subscription, stats in subscriptions:
+                matched = matched_publishers(subscription)
+                stats['matched_publishers'] = matched
+                stats['max_matched_publishers'] = max(stats['max_matched_publishers'], matched)
+        for channel, stream in streams.items():
+            count = node.count_publishers(stream['topic'])
+            stream['publisher_count'] = count
+            readers = stream['readers']
+            stream['messages_observed'] = any(reader['messages_received'] for reader in readers)
+            stream['counter_advancing'] = any(reader['messages_received'] >= 2 for reader in readers)
+            stream['timestamp_advancing'] = any(reader['stamp_advances'] for reader in readers)
+            stream['status'] = ('messages_observed' if stream['messages_observed'] else
+                                'matched_no_messages' if any(reader['max_matched_publishers'] for reader in readers) else
+                                'discovered_unmatched' if count else 'no_publisher_discovered')
+        other_flow = streams['depth']['messages_observed'] or streams['ir']['messages_observed']
+        summary = ('rgb_silent_other_streams_delivering' if not streams['rgb']['messages_observed'] and other_flow else
+                   'all_observed_streams_silent' if not any(s['messages_observed'] for s in streams.values()) else
+                   'messages_observed')
+        return {'operation': 'aurora-health', 'observation_ms': round((time.monotonic()-started)*1000),
+                'ros_domain_id': os.environ.get('ROS_DOMAIN_ID','0'),
+                'rmw': get_rmw_implementation_identifier(), 'streams': streams,
+                'summary': summary, 'counters_are': 'observer_callbacks_per_reader_not_driver_counters'}
+    finally:
+        for subscription, _ in subscriptions:
+            node.destroy_subscription(subscription)
+
+
 operation=sys.argv[1]
-if operation not in ('ros-inspect','camera-one-frame'): raise SystemExit('Unsupported observer operation')
+if operation not in ('ros-inspect','camera-one-frame','aurora-health'): raise SystemExit('Unsupported observer operation')
 rclpy.init()
 node=rclpy.create_node('nexarm_diagnostic_observer',enable_rosout=False,start_parameter_services=False)
 try:
-    if operation=='ros-inspect':
+    if operation=='aurora-health':
+        print(json.dumps(aurora_health()),flush=True)
+    elif operation=='ros-inspect':
         deadline=time.monotonic()+3
         while time.monotonic()<deadline: rclpy.spin_once(node,timeout_sec=0.1)
         nodes=node.get_node_names_and_namespaces()

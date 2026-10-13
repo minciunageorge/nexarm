@@ -1,10 +1,11 @@
 # Issue #1: approved ROS2 and Aurora still-frame diagnostics
 
-This stage adds only two fixed broker commands:
+This stage provides these fixed broker commands:
 
 | Command | Behavior |
 | --- | --- |
 | `ros-inspect` | Discover ROS nodes/topics for three seconds, return JSON with the inherited domain/middleware and exact fixed RGB publisher count/offered QoS |
+| `aurora-health` | Observe fixed RGB/depth/IR message counters and header timestamps for ten seconds; no images saved |
 | `camera-one-frame` | Subscribe to `/depth_cam/rgb/image_raw`, export exactly one 640×400 RGB still and timestamp metadata |
 
 The existing `nexarm` container ID, start time, configuration and runner registration
@@ -18,7 +19,7 @@ The owner explicitly permits this repository to remain public for this stage.
 No visibility change, separate automation repository or metadata-read token is
 required. Pi workflows are restricted to main. Diagnostics also retain the existing
 owner-added push triggers for `.nexarm/camera-trigger.txt` and
-`.nexarm/ros-trigger.txt`; ordinary source pushes do not target the Pi.
+`.nexarm/ros-trigger.txt` plus the new `.nexarm/aurora-trigger.txt`; ordinary source pushes do not target the Pi.
 PR/fork CI runs on GitHub-hosted runners. Keep workflow writers trusted, protect
 main, and restrict the `pi-diagnostics` and `pi-readonly` environments to main.
 A public self-hosted runner is not a sandbox for untrusted code: repository writers
@@ -134,3 +135,39 @@ missing-publisher timeout. Hosted
 CI repeats that integration test; ordinary tests/builds never select the Pi runner.
 These are distinct from ARM64/live Aurora tests, which remain unrun. No command in
 this implementation session connected to, upgraded or operated the real Pi.
+
+## Aurora stream health
+
+After rerunning the newly downloaded bootstrap as pi while the runner is idle,
+select `aurora-health` in **Pi approved ROS and Aurora diagnostics** on main.
+For the existing commit-trigger route, change `.nexarm/aurora-trigger.txt` on main
+with `Aurora health` in the commit message only when a diagnostic run is requested.
+This implementation does not create/change any trigger file or dispatch a Pi job.
+The root-owned broker adds only that exact sudoers command; registration, account,
+preservation guard and container remain unchanged. No package installation,
+deployment, camera launch, USB/device access or robot motion is enabled.
+
+The fixed topics are `/depth_cam/rgb/image_raw`, `/depth_cam/depth/image_raw` and
+`/depth_cam/ir/image_raw`, all `sensor_msgs/msg/Image`. Other names are not subscribed
+to; a missing/unobserved topic is not evidence of a stalled driver. Use `ros-inspect`
+to identify a different topic name before requesting an explicit allowlist update.
+
+The ten-second observer creates RELIABLE/VOLATILE and BEST_EFFORT/VOLATILE readers
+with depth 1 on each topic. It exports only JSON in `metadata.txt`, discarding image
+pixels. Each reader reports its local callback count, first/last header timestamp,
+timestamp advances/repeats/regressions, first/last local arrival time and current/max
+DDS matched-publisher count. Counts are per reader; never sum them as unique frames.
+These are observer counters, not driver-owned counters or USB statistics.
+
+`rgb_silent_other_streams_delivering` indicates RGB silence while depth or IR arrives.
+`all_observed_streams_silent` indicates no callbacks across the three observed topics;
+it does not identify USB, driver, node or DDS transport as the cause. Per-stream
+statuses distinguish discovered/unmatched, matched/silent and missing publishers.
+Advancing counters with frozen timestamps are also distinguished from no delivery.
+No messages is a successful diagnostic result rather than a failed frame capture.
+Existing 22-second observer alarm, CPU/memory and 25-second Docker-client limits apply.
+
+Tests cover RGB-only silence, all-stream silence with matching publishers, advancing
+and frozen stamps, missing/unmatched publishers and safe upgrade recognition. Native
+Humble integration uses only disposable synthetic publishers; physical Pi/Aurora
+behavior is untested by the cloud environment.
