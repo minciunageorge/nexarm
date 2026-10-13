@@ -1,1 +1,1 @@
-camera-one-frame trigger 2026-10-13
+camera-one-frame retry 2026-10-13 22:48 Europe/Bucharest
