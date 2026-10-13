@@ -1,6 +1,7 @@
 """Fixed transient ROS observer. No shell, actuator publishers, driver launch or image-file output."""
 import base64
 import ctypes
+import faulthandler
 import json
 import os
 from pathlib import Path
@@ -9,9 +10,11 @@ import resource
 import signal
 import sys
 import time
+import traceback
 
 # Default SIGALRM terminates even if middleware/native code blocks; killing the
 # Docker client alone would otherwise leave docker exec running in the container.
+faulthandler.register(signal.SIGALRM, file=sys.stderr, all_threads=False, chain=True)
 signal.alarm(22)
 resource.setrlimit(resource.RLIMIT_AS, (512*1024*1024,512*1024*1024))
 resource.setrlimit(resource.RLIMIT_CPU, (15,15))
@@ -293,31 +296,51 @@ def component_membership(services):
     return results
 
 
+def probe_section(name, function, fallback, errors):
+    """Optional probes cannot discard independent discovery evidence."""
+    try:return function()
+    except (OSError,RuntimeError,ValueError,IndexError,AttributeError) as error:
+        errors.append({'section':name,'error_type':type(error).__name__,
+                       'error':str(error)[:4096], 'traceback':traceback.format_exc(limit=6)[-8192:]})
+        return fallback
+
+
 def aurora_discover():
     deadline=time.monotonic()+3
     while time.monotonic()<deadline:rclpy.spin_once(node,timeout_sec=0.1)
     nodes=node.get_node_names_and_namespaces()
     services=node.get_service_names_and_types()
     if len(nodes)>200 or len(services)>200:raise RuntimeError('Discovery graph limit exceeded')
+    errors=[]
     camera_nodes=[]
     for name,namespace in nodes:
         full=namespace.rstrip('/')+'/'+name
         if full not in CAMERA_NODES:continue
-        offered=node.get_service_names_and_types_by_node(name,namespace)
-        if len(offered)>64:raise RuntimeError('Camera service limit exceeded')
+        def services_for_node(name=name,namespace=namespace):
+            offered=node.get_service_names_and_types_by_node(name,namespace)
+            if len(offered)>64:raise RuntimeError('Camera service limit exceeded')
+            return offered
+        offered=probe_section('camera_services:'+full,services_for_node,[],errors)
+        unavailable=any(error['section']=='camera_services:'+full for error in errors)
         camera_nodes.append({'name':full,'services':offered,
-                             'has_lifecycle_services':any('lifecycle_msgs/srv/ChangeState' in types for _,types in offered)})
+                             'services_status':'unavailable' if unavailable else 'reported',
+                             'has_lifecycle_services':None if unavailable else any('lifecycle_msgs/srv/ChangeState' in types for _,types in offered)})
     publishers={}
     for channel,topic in HEALTH_TOPICS.items():
         endpoints=node.get_publishers_info_by_topic(topic)
         if len(endpoints)>64:raise RuntimeError('Camera endpoint limit exceeded')
         publishers[channel]={'topic':topic,'publisher_count':node.count_publishers(topic),
                              'nodes':[endpoint.node_namespace.rstrip('/')+'/'+endpoint.node_name for endpoint in endpoints]}
-    components=component_membership(services)
+    components=probe_section('component_membership',lambda:component_membership(services),[],errors)
+    processes=probe_section('processes',process_inventory,[],errors)
+    usb=probe_section('container_usb',usb_inventory,{'visible':None,'devices':[]},errors)
+    devices=probe_section('container_devices',device_visibility,{'devices':[],'truncated':False},errors)
+    shared_memory=probe_section('dds_shared_memory',shared_memory_visibility,[],errors)
     return {'operation':'aurora-discover','nodes':camera_nodes,'camera_publishers':publishers,
-            'component_manager_services':components, 'processes':process_inventory(),
-            'container_usb':usb_inventory(),'container_devices':device_visibility(),
-            'observer_uid':os.geteuid(), 'dds_shared_memory':shared_memory_visibility(),
+            'component_manager_services':components, 'processes':processes,
+            'container_usb':usb,'container_devices':devices,
+            'observer_uid':os.geteuid(), 'dds_shared_memory':shared_memory,
+            'status':'partial' if errors else 'complete', 'probe_errors':errors,
             'ros_domain_id':os.environ.get('ROS_DOMAIN_ID','0'),'rmw':get_rmw_implementation_identifier(),
             'recovery':{'enabled':False,'status':'refused',
                         'reason':'Live process/component ownership and camera-only restart mechanism are not yet proven',

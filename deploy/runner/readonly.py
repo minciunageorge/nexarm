@@ -100,6 +100,21 @@ def timeout_diagnostics(data):
     return json.dumps(clean)
 
 
+def discovery_failure(operation, errors, exit_code=None, timed_out=False):
+    """Bounded real stderr/exit cause for the fixed discovery/report operations."""
+    errors.seek(0,2);size=errors.tell();errors.seek(0)
+    if size>65536:
+        first=errors.read(16384);errors.seek(-49152,2)
+        reason=first+b'\n[stderr truncated: middle omitted]\n'+errors.read(49152)
+    else:reason=errors.read(65536)
+    signal_number = -exit_code if exit_code is not None and exit_code<0 else (exit_code-128 if exit_code is not None and 128<exit_code<=192 else None)
+    return json.dumps({'operation':operation, 'status':'failed', 'exit_code':exit_code,
+                       'possible_signal':signal_number, 'docker_client_timed_out':timed_out,
+                       'timeout_seconds':25 if timed_out else None,
+                       'stderr_bytes':size,'stderr_truncated':size>65536,
+                       'stderr':reason.decode('utf-8',errors='replace')})
+
+
 def observe(operation, identifier):
     # No caller-controlled command/topic/UID/env. No helper copied into container.
     script=Path(__file__).with_name('container_diagnostics.py').read_bytes()
@@ -109,10 +124,17 @@ def observe(operation, identifier):
              '--env','AMENT_PREFIX_PATH=/opt/ros/humble','--env','RCUTILS_LOGGING_USE_STDOUT=0',
              identifier,'/usr/bin/python3','-I','-',operation]
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
-        completed=subprocess.run(command,input=script,stdout=output,stderr=errors,timeout=25,check=False,
-                       env={'PATH':'/usr/bin:/bin','HOME':'/nonexistent','LANG':'C.UTF-8'},
-                       preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_FSIZE,(4*1024*1024,4*1024*1024)))
+        try:
+            completed=subprocess.run(command,input=script,stdout=output,stderr=errors,timeout=25,check=False,
+                           env={'PATH':'/usr/bin:/bin','HOME':'/nonexistent','LANG':'C.UTF-8'},
+                           preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_FSIZE,(4*1024*1024,4*1024*1024)))
+        except subprocess.TimeoutExpired:
+            if operation in ('aurora-discover','aurora-recover'):
+                raise ValueError(discovery_failure(operation,errors,timed_out=True)) from None
+            raise
         if completed.returncode:
+            if operation in ('aurora-discover','aurora-recover'):
+                raise ValueError(discovery_failure(operation,errors,exit_code=completed.returncode))
             errors.seek(0); reason=errors.read(4096)
             details=None
             if operation=='camera-one-frame':
@@ -135,7 +157,11 @@ def observe(operation, identifier):
     if operation in ('aurora-discover','aurora-recover'):
         if result.get('operation')!=operation or result.get('recovery',{}).get('enabled') is not False or result.get('recovery',{}).get('status')!='refused':
             raise ValueError('Discovery cannot enable camera recovery')
-        result['host_usb']=host_usb_inventory()
+        try:
+            result['host_usb']=host_usb_inventory()
+        except (OSError,ValueError) as error:
+            result['host_usb']={'visible':None,'devices':[],'error_type':type(error).__name__,'error':str(error)[:4096]}
+            result['status']='partial'
         print(json.dumps(result))
     elif operation=='aurora-health':
         expected={'rgb':'/depth_cam/rgb/image_raw','depth':'/depth_cam/depth/image_raw','ir':'/depth_cam/ir/image_raw'}

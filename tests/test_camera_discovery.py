@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import traceback
 import types
 import unittest
 from unittest.mock import MagicMock
@@ -12,8 +13,9 @@ ROOT=Path(__file__).resolve().parents[1]
 SOURCE=(ROOT/'deploy/runner/container_diagnostics.py').read_text()
 
 def definitions(namespace):
+    namespace.setdefault('traceback',traceback)
     tree=ast.parse(SOURCE)
-    names={'safe_text','process_inventory','usb_inventory','device_visibility','shared_memory_visibility','component_membership','aurora_discover'}
+    names={'safe_text','process_inventory','usb_inventory','device_visibility','shared_memory_visibility','component_membership','probe_section','aurora_discover'}
     constants={'OFFICIAL_PACKAGE','OFFICIAL_LAUNCH','CAMERA_NODES'}
     selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in names or isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id in constants for t in n.targets)]
     exec(compile(ast.Module(body=selected,type_ignores=[]),'observer','exec'),namespace)
@@ -69,6 +71,13 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(result['recovery']['status'],'refused')
         node.create_client.assert_not_called()
         node.create_publisher.assert_not_called()
+        node.get_service_names_and_types_by_node.side_effect=RuntimeError('Camera node left graph')
+        ticks=iter(range(100))
+        partial=ns['aurora_discover']()
+        self.assertEqual(partial['status'],'partial')
+        self.assertEqual(partial['nodes'][0]['services_status'],'unavailable')
+        self.assertIsNone(partial['nodes'][0]['has_lifecycle_services'])
+        self.assertFalse(partial['recovery']['enabled'])
 
     def test_observer_contains_no_mutating_process_or_usb_interface(self):
         for forbidden in ['os.kill(', 'subprocess.', 'ChangeState.Request', 'LoadNode', 'UnloadNode', 'USBDEVFS_RESET', 'os.system(']:
@@ -108,3 +117,31 @@ class DiscoveryTests(unittest.TestCase):
             with patch.object(broker,'Path',side_effect=mapped):report=broker.host_usb_inventory()
             self.assertEqual(report['devices'][0]['interfaces'][0]['driver'],'uvcvideo')
             self.assertNotIn('DO_NOT_EXPORT',json.dumps(report))
+
+    def test_permission_and_hotplug_errors_return_partial_probe_evidence(self):
+        ns=definitions({})
+        for failure in [PermissionError(13,'USB directory denied'),FileNotFoundError(2,'USB device unplugged'),RuntimeError('Shared memory inventory limit exceeded')]:
+            errors=[]
+            def fail():raise failure
+            result=ns['probe_section']('container_devices',fail,{'devices':[]},errors)
+            self.assertEqual(result,{'devices':[]})
+            self.assertEqual(errors[0]['error_type'],type(failure).__name__)
+            self.assertIn(str(failure),errors[0]['traceback'])
+            self.assertEqual(errors[0]['section'],'container_devices')
+
+    def test_independent_discovery_survives_failed_optional_usb_probe(self):
+        node=MagicMock();node.get_node_names_and_namespaces.return_value=[]
+        node.get_service_names_and_types.return_value=[]
+        node.get_publishers_info_by_topic.return_value=[];node.count_publishers.return_value=0
+        ticks=iter(range(100))
+        ns=definitions({'node':node,'time':types.SimpleNamespace(monotonic=lambda:next(ticks)),
+                        'rclpy':types.SimpleNamespace(spin_once=lambda *a,**k:None),
+                        'HEALTH_TOPICS':{'rgb':'/depth_cam/rgb/image_raw'},'os':os,
+                        'get_rmw_implementation_identifier':lambda:'rmw_fastrtps_cpp'})
+        def denied():raise PermissionError(13,'USB directory denied')
+        ns.update(process_inventory=lambda:[{'pid':7}],usb_inventory=lambda:{'visible':False},device_visibility=denied,shared_memory_visibility=lambda:[])
+        result=ns['aurora_discover']()
+        self.assertEqual(result['status'],'partial')
+        self.assertEqual(result['processes'],[{'pid':7}])
+        self.assertEqual(result['probe_errors'][0]['section'],'container_devices')
+        self.assertFalse(result['recovery']['enabled'])

@@ -67,7 +67,7 @@ class ObserverTests(unittest.TestCase):
             return 0
         library.rcl_subscription_get_publisher_count.side_effect=count_matched
         output=io.StringIO()
-        with patch.dict(sys.modules,modules),patch.object(sys,'argv',['observer',operation]),patch.object(sys,'version_info',(3,10)),patch.object(sys,'path',list(sys.path)),patch('ctypes.CDLL',return_value=library),patch('signal.alarm'),patch('resource.setrlimit'),patch('time.monotonic',side_effect=range(100)),contextlib.redirect_stdout(output):
+        with patch.dict(sys.modules,modules),patch.object(sys,'argv',['observer',operation]),patch.object(sys,'version_info',(3,10)),patch.object(sys,'path',list(sys.path)),patch('ctypes.CDLL',return_value=library),patch('faulthandler.register'),patch('signal.alarm'),patch('resource.setrlimit'),patch('time.monotonic',side_effect=range(100)),contextlib.redirect_stdout(output):
             try:exec(compile(SOURCE,'container_diagnostics.py','exec'),{})
             finally:
                 self.last_output=output.getvalue()

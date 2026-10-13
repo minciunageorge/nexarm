@@ -173,3 +173,47 @@ class DiagnosticsTests(unittest.TestCase):
    return subprocess.CompletedProcess(command,0)
   with patch.object(broker.subprocess,'run',side_effect=execute):
    with self.assertRaisesRegex(ValueError,'cannot enable camera recovery'):broker.observe('aurora-recover','a'*64)
+
+ def test_discovery_preserves_real_stderr_exit_and_timeout(self):
+  message=b'Traceback (most recent call last):\nPermissionError: [Errno 13] /dev/bus/usb/001\n'
+  for timeout in [False,True]:
+   def execute(command,**kwargs):
+    kwargs['stderr'].write(message)
+    if timeout:raise subprocess.TimeoutExpired(command,25)
+    return subprocess.CompletedProcess(command,142)
+   with patch.object(broker.subprocess,'run',side_effect=execute):
+    with self.assertRaises(ValueError) as error:broker.observe('aurora-discover','a'*64)
+   report=json.loads(str(error.exception))
+   self.assertEqual(report['stderr'],message.decode())
+   self.assertEqual(report['docker_client_timed_out'],timeout)
+   self.assertEqual(report['exit_code'],None if timeout else 142)
+   self.assertEqual(report['possible_signal'],None if timeout else 14)
+
+ def test_discovery_stderr_is_bounded_with_traceback_tail_preserved(self):
+  data=io.BytesIO(b'HEADER\n'+b'x'*100000+b'\nAttributeError: real cause at end\n')
+  report=json.loads(broker.discovery_failure('aurora-discover',data,exit_code=1))
+  self.assertTrue(report['stderr_truncated'])
+  self.assertIn('HEADER',report['stderr'])
+  self.assertIn('AttributeError: real cause at end',report['stderr'])
+  self.assertLess(len(report['stderr']),66000)
+
+ def test_previous_discovery_files_can_upgrade_to_error_reporting(self):
+  upgrade=load('upgrade_diagnostics')
+  for name in ['readonly.py','container_diagnostics.py']:
+   upgrade.require_known_file(name,(ROOT/'tests/fixtures'/('diagnostics-discovery-'+name)).read_bytes(),(ROOT/'deploy/runner'/name).read_bytes())
+
+ def test_job_failure_keeps_real_discovery_error_artifact(self):
+  spec=importlib.util.spec_from_file_location('discovery_job',ROOT/'tools/pi_runner_job.py')
+  job=importlib.util.module_from_spec(spec);spec.loader.exec_module(job)
+  record={'operation':'aurora-discover','exit_code':1,'stderr':'PermissionError: USB directory denied'}
+  def execute(command,**kwargs):
+   self.assertEqual(command,['/usr/bin/sudo','-n','/usr/local/sbin/nexarm-readonly','aurora-discover'])
+   kwargs['stderr'].write(json.dumps(record).encode())
+   return subprocess.CompletedProcess(command,1)
+  with tempfile.TemporaryDirectory() as directory:
+   output=Path(directory)/'artifacts'
+   with patch('sys.argv',['job','aurora-discover','--output-dir',str(output)]),patch.object(job.subprocess,'run',side_effect=execute):
+    with self.assertRaises(SystemExit) as error:job.main()
+   self.assertEqual(error.exception.code,1)
+   self.assertEqual(json.loads((output/'broker-error.log').read_text()),record)
+   self.assertFalse((output/'metadata.txt').exists())

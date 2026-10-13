@@ -219,3 +219,27 @@ on the basis of this report; it may create a duplicate driver or affect shared c
 
 Tests use synthetic ROS/process/USB fixtures and disposable local containers; no
 live Pi process inspection or camera restart was performed by this change.
+
+## Discovery failure diagnostics
+
+For `aurora-discover` / report-only `aurora-recover`, failed observer invocations
+now retain the real exit code and stderr in `broker-error.log` as JSON, rather than
+only `Fixed ROS observer failed`. Stderr is capped at 64 KiB, preserving its first
+16 KiB and last 48 KiB if truncated; the original byte count and truncation flag
+are included. Docker-client timeout and possible signal exit are identified.
+The existing 22-second SIGALRM still terminates the observer; faulthandler prints
+its current Python stack before chaining to that termination.
+
+Optional process, component, USB/device and shared-memory probes report `partial`
+with per-section error type/message/traceback when permissions, hotplug races,
+probe limits or optional API failures prevent inspection. Independent node and
+publisher evidence is retained. Host USB probe failures are also recorded rather
+than dropping the container discovery report. A partial/unavailable probe must
+not be interpreted as evidence of healthy, absent or isolated hardware.
+
+The reported live artifact lost the underlying stderr in the previous version,
+so its exact root cause cannot be established retrospectively here. Tests
+reproduce the permission-denied failure path under UID 65534 in a disposable
+container and confirm discovery returns useful partial evidence. Rerun the new
+bootstrap while idle, then `aurora-discover`; an unexpected fatal error now exports
+its actual cause. Restart remains disabled regardless of discovery success.

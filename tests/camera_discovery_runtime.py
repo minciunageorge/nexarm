@@ -18,6 +18,9 @@ while time.monotonic()<deadline:rclpy.spin_once(n,timeout_sec=0.1)
 n.destroy_node();rclpy.shutdown()
 '''
 try:
+ # Reproduce live-style permissions solely inside this disposable container.
+ setup=base.copy();setup[setup.index('--user')+1]='0:0'
+ subprocess.run(setup,input=b'from pathlib import Path; p=Path("/dev/bus/usb/001"); p.mkdir(parents=True,exist_ok=True); p.chmod(0o700)',check=True,capture_output=True,timeout=10)
  pub=subprocess.Popen(base+['/opt/ros/humble/bin/ros2','launch','deptrum-ros-driver-aurora930','aurora930_launch.py'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
  pub.stdin.write(source);pub.stdin.close()
  try:
@@ -27,11 +30,13 @@ try:
    report=json.loads(result.stdout)
    assert report['operation']==operation and report['recovery']['enabled'] is False
    assert report['recovery']['status']=='refused'
+   assert report['status']=='partial',report
+   assert any(e['section']=='container_devices' and e['error_type']=='PermissionError' for e in report['probe_errors']),report
    assert any(p['official_launch'] and p['node_pid_mapping_proven'] is False for p in report['processes']),report
    assert any(n['name']=='/depth_cam' for n in report['nodes']),report
    assert all('/depth_cam' in p['nodes'] for p in report['camera_publishers'].values()),report
    if operation=='aurora-recover':assert report['health']['summary']=='all_observed_streams_silent',report
-   print(operation+': known launch/node found; camera restart remains refused; safe device metadata collected',flush=True)
+   print(operation+': known launch/node found; camera restart remains refused; permission-denied USB probe reported while process/node evidence survives',flush=True)
  finally:
   pub.wait(timeout=30)
   assert pub.returncode==0,pub.stderr.read().decode()[:2000]
