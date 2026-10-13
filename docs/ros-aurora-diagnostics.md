@@ -264,3 +264,24 @@ The exact live failure `RuntimeError: Discovery graph limit exceeded` is address
 by this filtering/partial-result policy. Rerun the updated bootstrap while idle,
 then `aurora-discover`. Regression tests include a 5000-entry graph and a native
 Humble graph with more than 200 services; this does not constitute a live Pi test.
+
+## SDK inventory (discovery only)
+
+`aurora-discover` now includes `sdk`. It scans only fixed roots `/opt`,
+`/usr/local`, `/home`, `/root`, `/workspace`, `/workspaces` and `/usr/lib`, looking
+for DePtrum/Aurora930 names. Output lists file paths, type, size, ownership/mode,
+shared-library filename and sample/test/demo name hints. These are candidates,
+not proven safe test commands or verified SDK versions. It also reads up to
+64 KiB of each camera candidate's process maps and emits only matching library
+filenames; addresses, unrelated maps and library contents are not exported.
+
+Traversal is capped at 4096 entries, depth six, 128 results and two seconds. It
+never follows directory symlinks, executes/imports SDK files, reads SDK file
+contents, opens a camera, installs packages, or stops the driver. Permission
+errors and scan limits are explicit. An empty/truncated/unreadable inventory
+cannot prove that the SDK is missing. Root-owned driver maps/workspaces may be
+unreadable to the fixed UID 65534 observer; no privileged fallback is added.
+
+Rerun the updated standalone bootstrap while the runner is idle, then run
+`aurora-discover` and inspect `sdk` in `metadata.txt`. No new sudoers operation or
+workflow permission is needed. No SDK test execution is enabled by this update.

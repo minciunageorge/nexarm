@@ -14,11 +14,14 @@ SOURCE=(ROOT/'deploy/runner/container_diagnostics.py').read_text()
 
 def definitions(namespace):
     namespace.setdefault('traceback',traceback)
+    namespace.setdefault('sdk_inventory',lambda processes:{'status':'complete','truncated':False})
     tree=ast.parse(SOURCE)
-    names={'safe_text','process_inventory','usb_inventory','device_visibility','shared_memory_visibility','component_membership','probe_section','aurora_discover'}
-    constants={'OFFICIAL_PACKAGE','OFFICIAL_LAUNCH','CAMERA_NODES'}
+    names={'safe_text','process_inventory','usb_inventory','device_visibility','shared_memory_visibility','component_membership','probe_section','sdk_inventory','aurora_discover'}
+    constants={'OFFICIAL_PACKAGE','OFFICIAL_LAUNCH','CAMERA_NODES','SDK_ROOTS'}
     selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in names or isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id in constants for t in n.targets)]
     exec(compile(ast.Module(body=selected,type_ignores=[]),'observer','exec'),namespace)
+    if 'Path' not in namespace:
+        namespace['sdk_inventory']=lambda processes:{'status':'complete','truncated':False}
     return namespace
 
 class DiscoveryTests(unittest.TestCase):
@@ -198,3 +201,35 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(report[0]['component_ids'][0],250)
         self.assertTrue(report[0]['includes_known_camera'])
         self.assertEqual(node.destroy_client.call_count,16)
+
+    def test_sdk_inventory_reports_metadata_and_loaded_library_names_without_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);sdk=root/'deptrum-sdk';sdk.mkdir()
+            binary=sdk/'sdk_sample';binary.write_bytes(b'NOT EXECUTED');binary.chmod(0o755)
+            library=sdk/'libdeptrum.so.2';library.write_bytes(b'NOT LOADED')
+            outside=root/'secret';outside.write_text('DO_NOT_READ')
+            (sdk/'deptrum_link').symlink_to(outside)
+            proc=root/'proc'/'7';proc.mkdir(parents=True)
+            (proc/'maps').write_text('1234-2345 r-xp 0000 00:00 0 /opt/deptrum/libdeptrum.so.2\n1234-2345 r-xp 0000 00:00 0 /secret/non_sdk.so\n')
+            def mapped(value):return root/'proc' if value=='/proc' else Path(value)
+            ns=definitions({'Path':mapped,'os':os,'time':types.SimpleNamespace(monotonic=lambda:0)})
+            ns['SDK_ROOTS']=(str(root),)
+            result=ns['sdk_inventory']([{'pid':7}])
+            self.assertFalse(result['sdk_executed']);self.assertFalse(result['camera_opened'])
+            self.assertTrue(any(f['path']==str(binary) and f['test_name_hint'] and not f['safe_to_run_proven'] for f in result['files']))
+            self.assertEqual(result['loaded_library_filenames'],[{'pid':7,'path':'/opt/deptrum/libdeptrum.so.2'}])
+            self.assertNotIn('DO_NOT_READ',json.dumps(result))
+            self.assertNotIn('NOT EXECUTED',json.dumps(result))
+            self.assertEqual(binary.read_bytes(),b'NOT EXECUTED')
+
+    def test_sdk_inventory_caps_large_tree_and_marks_unknown_loaded_libraries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            for i in range(4200):(root/('unrelated_'+str(i))).touch()
+            ns=definitions({'Path':Path,'os':os,'time':types.SimpleNamespace(monotonic=lambda:0)})
+            ns['SDK_ROOTS']=(str(root),)
+            result=ns['sdk_inventory']([{'pid':99999999}])
+            self.assertTrue(result['truncated'])
+            self.assertEqual(result['status'],'partial')
+            self.assertLessEqual(result['entries_examined'],4096)
+            self.assertEqual(result['issues'][0]['error_type'],'unreadable')

@@ -310,6 +310,74 @@ def probe_section(name, function, fallback, errors):
         return fallback
 
 
+SDK_ROOTS = ('/opt','/usr/local','/home','/root','/workspace','/workspaces','/usr/lib')
+
+
+def sdk_inventory(processes):
+    """Metadata only: never execute/import SDK files, inspect devices or install."""
+    files=[];issues=[];loaded=[];visited=0;truncated=False
+    deadline=time.monotonic()+2
+    def relevant(value):return any(word in value.lower() for word in ('deptrum','aurora930','aurora_930','aurora-930'))
+    for root in SDK_ROOTS:
+        pending=[(root,0)]
+        while pending:
+            if visited>=4096 or time.monotonic()>=deadline or len(files)>=128:
+                truncated=True;break
+            directory,depth=pending.pop()
+            try:
+                # Count every directory entry; a huge directory cannot allocate
+                # an unbounded list before the entry/output budgets are checked.
+                with os.scandir(directory) as entries:
+                    children=[]
+                    for entry in entries:
+                        visited+=1
+                        if visited>4096 or len(files)>=128 or time.monotonic()>=deadline:
+                            truncated=True;break
+                        try:
+                            is_dir=entry.is_dir(follow_symlinks=False)
+                            if is_dir and depth<6:children.append((entry.path,depth+1))
+                            if not relevant(entry.path):continue
+                            info=entry.stat(follow_symlinks=False)
+                            kind='directory' if is_dir else 'symlink' if entry.is_symlink() else 'file'
+                            basename=entry.name.lower()
+                            files.append({'path':entry.path,'kind':kind,'size_bytes':info.st_size,
+                                          'uid':info.st_uid,'mode':oct(info.st_mode & 0o777),
+                                          'shared_library_name':'.so' in basename,
+                                          'test_name_hint':any(word in basename for word in ('sample','example','test','demo')),
+                                          'executable_bit':bool(info.st_mode & 0o111) and kind=='file',
+                                          'safe_to_run_proven':False})
+                        except OSError as error:
+                            if len(issues)<32:issues.append({'path':entry.path,'error_type':type(error).__name__})
+                    children.sort(key=lambda item:(relevant(item[0]),item[0]))
+                    pending.extend(children)
+            except FileNotFoundError:continue
+            except OSError as error:
+                if len(issues)<32:issues.append({'path':directory,'error_type':type(error).__name__})
+        if truncated:break
+    for process in processes[:64]:
+        pid=process['pid'];maps=Path('/proc')/str(pid)/'maps'
+        text=safe_text(maps,65537)
+        if text is None:
+            if len(issues)<32:issues.append({'pid':pid,'probe':'loaded_libraries','error_type':'unreadable'})
+            continue
+        if len(text)>65536:truncated=True
+        for line in text[:65536].splitlines():
+            parts=line.split(None,5)
+            if len(parts)!=6:continue
+            filename=parts[5]
+            if relevant(filename) and '.so' in filename:
+                if len(loaded)>=128:
+                    truncated=True;break
+                item={'pid':pid,'path':filename}
+                if item not in loaded:loaded.append(item)
+    return {'status':'partial' if truncated or issues else 'complete', 'roots':list(SDK_ROOTS),
+            'entries_examined':min(visited,4096),'entry_limit':4096,'file_limit':128,
+            'depth_limit':6,'time_budget_seconds':2,'truncated':truncated,
+            'files':files,'loaded_library_filenames':loaded,'issues':issues,
+            'sdk_executed':False,'camera_opened':False,
+            'limitations':'Names/metadata only; version and test safety are not inferred; unreadable or unscanned paths may contain SDK files'}
+
+
 def aurora_discover():
     deadline=time.monotonic()+3
     while time.monotonic()<deadline:rclpy.spin_once(node,timeout_sec=0.1)
@@ -351,14 +419,16 @@ def aurora_discover():
     components=probe_section('component_membership',lambda:component_membership(services),[],errors)
     truncated=truncated or any(result.get('nodes_truncated',False) for result in components)
     processes=probe_section('processes',process_inventory,[],errors)
+    sdk=probe_section('sdk',lambda:sdk_inventory(processes),{'status':'unavailable','sdk_executed':False},errors)
+    truncated=truncated or sdk.get('truncated',False)
     usb=probe_section('container_usb',usb_inventory,{'visible':None,'devices':[]},errors)
     devices=probe_section('container_devices',device_visibility,{'devices':[],'truncated':False},errors)
     shared_memory=probe_section('dds_shared_memory',shared_memory_visibility,[],errors)
     return {'operation':'aurora-discover','nodes':camera_nodes,'camera_publishers':publishers,
-            'component_manager_services':components, 'processes':processes,
+            'component_manager_services':components, 'processes':processes, 'sdk':sdk,
             'container_usb':usb,'container_devices':devices,
             'observer_uid':os.geteuid(), 'dds_shared_memory':shared_memory,
-            'status':'partial' if errors or truncated else 'complete', 'probe_errors':errors,
+            'status':'partial' if errors or truncated or sdk.get('status')!='complete' else 'complete', 'probe_errors':errors,
             'graph':graph, 'truncated':truncated,
             'ros_domain_id':os.environ.get('ROS_DOMAIN_ID','0'),'rmw':get_rmw_implementation_identifier(),
             'recovery':{'enabled':False,'status':'refused',

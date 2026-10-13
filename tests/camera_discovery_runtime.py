@@ -33,6 +33,8 @@ try:
    report=json.loads(result.stdout)
    assert report['operation']==operation and report['recovery']['enabled'] is False
    assert report['recovery']['status']=='refused'
+   assert report['sdk']['sdk_executed'] is False and report['sdk']['camera_opened'] is False,report
+   assert report['sdk']['entries_examined']<=4096 and len(report['sdk']['files'])<=128,report
    assert report['status']=='partial',report
    assert report['graph']['total_services']>200,report
    assert report['graph']['scanned_services']==report['graph']['total_services'],report

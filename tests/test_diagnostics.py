@@ -221,3 +221,7 @@ class DiagnosticsTests(unittest.TestCase):
  def test_previous_partial_discovery_observer_can_upgrade(self):
   upgrade=load('upgrade_diagnostics')
   upgrade.require_known_file('container_diagnostics.py',(ROOT/'tests/fixtures/diagnostics-partial-container_diagnostics.py').read_bytes(),(ROOT/'deploy/runner/container_diagnostics.py').read_bytes())
+
+ def test_previous_large_graph_observer_can_upgrade_to_sdk_inventory(self):
+  upgrade=load('upgrade_diagnostics')
+  upgrade.require_known_file('container_diagnostics.py',(ROOT/'tests/fixtures/diagnostics-largegraph-container_diagnostics.py').read_bytes(),(ROOT/'deploy/runner/container_diagnostics.py').read_bytes())
