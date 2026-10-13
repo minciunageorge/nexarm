@@ -1,1 +1,1 @@
-camera-one-frame retry 2026-10-13 22:48 Europe/Bucharest
+camera-one-frame QoS test 2026-10-13 23:10 Europe/Bucharest
