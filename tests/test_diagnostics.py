@@ -93,7 +93,7 @@ class DiagnosticsTests(unittest.TestCase):
     value=str(value)
     return host/value.lstrip('/') if value.startswith(('/etc/','/usr/')) else Path(value)
    config=mapped('/etc/nexarm-runner/readonly.json');config.parent.mkdir(parents=True)
-   config.write_text(json.dumps({'container_id':'a'*64,'artifact_paths':['/results']}));config.chmod(0o600)
+   config.write_text('\ufeff'+json.dumps({'container_id':'a'*64,'artifact_paths':['/results']}));config.chmod(0o600)
    destinations={name:str(mapped(path)) for name,path in upgrade.DESTINATIONS.items()}
    for name,destination in destinations.items():
     path=Path(destination);path.parent.mkdir(parents=True,exist_ok=True)
@@ -109,7 +109,7 @@ class DiagnosticsTests(unittest.TestCase):
     info=list(actual_stat(path,**kwargs));info[4]=0
     return os.stat_result(info)
    for retry in range(2):
-    with patch.object(upgrade,'Path',side_effect=mapped),patch.object(upgrade,'DESTINATIONS',destinations),patch.object(upgrade.os,'geteuid',return_value=0),patch.object(Path,'stat',root_stat),patch.object(upgrade.sys,'argv',['upgrade',str(ROOT/'deploy/runner')]),patch.object(upgrade.sys,'stdin',io.StringIO(json.dumps({'repository':'minciunageorge/nexarm','container_id':'a'*64}))):
+    with patch.object(upgrade,'Path',side_effect=mapped),patch.object(upgrade,'DESTINATIONS',destinations),patch.object(upgrade.os,'geteuid',return_value=0),patch.object(Path,'stat',root_stat),patch.object(upgrade.sys,'argv',['upgrade',str(ROOT/'deploy/runner')]),patch.object(upgrade.sys,'stdin',io.StringIO('\ufeff'+json.dumps({'repository':'minciunageorge/nexarm','container_id':'a'*64}))):
      upgrade.main()
    self.assertEqual(backup.read_bytes(),old)
    self.assertEqual(token.read_text(),'unused-preserve')

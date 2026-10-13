@@ -33,13 +33,13 @@ def require_known_file(name,current,desired):
 def main():
     if os.geteuid()!=0 or len(sys.argv)!=2:raise SystemExit('Operator root upgrade only')
     stage=Path(sys.argv[1])
-    enrollment=json.load(sys.stdin)
+    enrollment=json.loads(sys.stdin.read().removeprefix("\ufeff"))
     if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', enrollment['repository']):
         raise ValueError('Invalid repository identity')
     config_path=Path('/etc/nexarm-runner/readonly.json')
     if config_path.is_symlink() or config_path.stat().st_uid!=0 or config_path.stat().st_mode&0o077:
         raise SystemExit('Unsafe existing broker config; preserved')
-    config=json.loads(config_path.read_text())
+    config=json.loads(config_path.read_text(encoding="utf-8-sig"))
     if config['container_id']!=enrollment['container_id']:raise SystemExit('Existing enrolled container differs')
     # Validate every file before mutating any; recognize only previous or desired
     # bytes. A partial prior application is resumable, custom files are preserved.

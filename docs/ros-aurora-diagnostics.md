@@ -30,6 +30,10 @@ Run as **pi**, while the runner is idle, from your existing SSH session:
 curl -fL https://raw.githubusercontent.com/minciunageorge/nexarm/main/bootstrap/activate-nexarm-runner.py -o /home/pi/activate-nexarm-diagnostics.py && python3 /home/pi/activate-nexarm-diagnostics.py
 ```
 
+If activation stopped with `Unexpected UTF-8 BOM`, redownload this standalone
+script and rerun it; no runner removal, re-registration or hand-editing `.runner`
+is needed. UTF-8 registration/config JSON with or without a BOM is accepted.
+
 Use a new filename if the destination contains your own changes. Accept the default
 repository. An already registered runner needs no registration or metadata token.
 The standalone script checks the preserved registration URL and container ID/guard,

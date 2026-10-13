@@ -22,6 +22,24 @@ class ActivationTests(unittest.TestCase):
             data=self.metadata();data['assets'][0][field]=value
             with self.assertRaises(ValueError): activation.release_metadata(data)
 
+    def test_bom_registration_matches_without_changing_file(self):
+        import json, subprocess, sys
+        with tempfile.TemporaryDirectory() as directory:
+            registration=Path(directory)/'.runner'
+            for prefix in [b'', b'\xef\xbb\xbf']:
+                original=prefix+json.dumps({'gitHubUrl':'https://github.com/minciunageorge/nexarm/'}).encode('utf-8')
+                registration.write_bytes(original)
+                subprocess.run([sys.executable,'-I','-c',activation.REGISTRATION_CHECK,str(registration),'https://github.com/minciunageorge/nexarm'],check=True,capture_output=True)
+                rejected=subprocess.run([sys.executable,'-I','-c',activation.REGISTRATION_CHECK,str(registration),'https://github.com/other/repo'],capture_output=True)
+                self.assertNotEqual(rejected.returncode,0)
+                self.assertIn(b'Selected repository differs',rejected.stderr)
+                self.assertEqual(registration.read_bytes(),original)
+
+    def test_bom_release_metadata_keeps_official_digest_validation(self):
+        import io,json
+        response=io.BytesIO(b'\xef\xbb\xbf'+json.dumps(self.metadata()).encode('utf-8'))
+        self.assertEqual(activation.release_metadata(json.load(response))[1],'a'*64)
+
     def test_archive_rejects_traversal_links_and_devices(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'test.tar.gz'

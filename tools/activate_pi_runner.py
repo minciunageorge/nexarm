@@ -25,6 +25,11 @@ FILES = ['deploy/bootstrap-preserve.sh', 'deploy/install-pi-runner-host.sh',
          'deploy/runner/upgrade_diagnostics.py']
 
 
+# GitHub's .NET runner can write .runner as UTF-8 with a BOM. This check
+# executes as the dedicated account and only reads the preserved registration.
+REGISTRATION_CHECK = 'import json,sys; from pathlib import Path; actual=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8-sig")).get("gitHubUrl","").rstrip("/").lower(); assert actual==sys.argv[2].lower(), "Selected repository differs from preserved runner registration"'
+
+
 def release_metadata(data):
     version = data['tag_name'].removeprefix('v')
     if not re.fullmatch(r'2\.\d+\.\d+', version):
@@ -394,8 +399,7 @@ def main():
             target.write_text(contents)
         registered='/var/lib/nexarm-runner/actions-runner/.runner'
         if subprocess.run(['sudo','test','-f',registered]).returncode==0:
-            check='import json,sys; from pathlib import Path; actual=json.loads(Path(sys.argv[1]).read_text()).get("gitHubUrl","").rstrip("/").lower(); assert actual==sys.argv[2].lower(), "Selected repository differs from preserved runner registration"'
-            run(['sudo','-H','-u','nexarm-runner','/usr/bin/python3','-I','-c',check,registered,f'https://github.com/{repository}'])
+            run(['sudo','-H','-u','nexarm-runner','/usr/bin/python3','-I','-c',REGISTRATION_CHECK,registered,f'https://github.com/{repository}'])
         unit_changed = ensure_host_setup(stage, baseline.split()[0],
                                          {'repository':repository})
         result = subprocess.run(['systemctl', 'is-active', '--quiet', 'nexarm-actions.service'])
