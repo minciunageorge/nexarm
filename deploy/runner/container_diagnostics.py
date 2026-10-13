@@ -1,5 +1,6 @@
 """Fixed transient ROS observer. No shell, actuator publishers, driver launch or image-file output."""
 import base64
+import ctypes
 import json
 import os
 import resource
@@ -22,11 +23,32 @@ from rclpy.utilities import get_rmw_implementation_identifier
 from sensor_msgs.msg import Image
 
 RGB_TOPIC = '/depth_cam/rgb/image_raw'
-# A BEST_EFFORT / VOLATILE reader accepts live samples from best-effort or
-# reliable, volatile or transient-local writers; no historical frame is requested.
+# Primary reader matches the live Aurora RELIABLE/VOLATILE writer. A bounded
+# best-effort fallback preserves support for sensor-data writers on this topic.
 CAMERA_QOS = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=5,
-                        reliability=ReliabilityPolicy.BEST_EFFORT,
+                        reliability=ReliabilityPolicy.RELIABLE,
                         durability=DurabilityPolicy.VOLATILE)
+FALLBACK_QOS = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=5,
+                          reliability=ReliabilityPolicy.BEST_EFFORT,
+                          durability=DurabilityPolicy.VOLATILE)
+
+
+# Humble's Python Subscription wrapper lacks get_publisher_count(). Borrow the
+# protected rcl_subscription_t pointer for this fixed read-only RCL query.
+_rcl = ctypes.CDLL('/opt/ros/humble/lib/librcl.so')
+_count_matched = _rcl.rcl_subscription_get_publisher_count
+_count_matched.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t)]
+_count_matched.restype = ctypes.c_int
+
+
+def matched_publishers(subscription):
+    count = ctypes.c_size_t()
+    handle = subscription.handle
+    with handle:
+        status = _count_matched(ctypes.c_void_p(handle.pointer), ctypes.byref(count))
+    if status != 0:
+        raise RuntimeError('RCL matched-publisher query failed')
+    return count.value
 
 
 def describe_qos(qos):
@@ -48,7 +70,8 @@ def camera_publishers():
                             'topic_type': endpoint.topic_type,
                             'offered_qos': describe_qos(endpoint.qos_profile)}
                            for endpoint in endpoints],
-            'requested_qos': describe_qos(CAMERA_QOS)}
+            'requested_qos': describe_qos(CAMERA_QOS),
+            'fallback_requested_qos': describe_qos(FALLBACK_QOS)}
 
 
 operation=sys.argv[1]
@@ -65,10 +88,37 @@ try:
         print(json.dumps({'nodes':sorted(nodes),'topics':sorted(topics), 'ros_domain_id':os.environ.get('ROS_DOMAIN_ID','0'), 'rmw':get_rmw_implementation_identifier(), 'camera':camera_publishers()}),flush=True)
     else:
         frame=[]
-        subscription=node.create_subscription(Image,RGB_TOPIC,frame.append,CAMERA_QOS)
+        attempts=[]
         deadline=time.monotonic()+15
-        while not frame and time.monotonic()<deadline: rclpy.spin_once(node,timeout_sec=0.1)
-        if not frame: raise TimeoutError('No Aurora RGB frame within 15 seconds')
+        for qos in (CAMERA_QOS,FALLBACK_QOS):
+            attempt={'reliability':qos.reliability.name, 'durability':qos.durability.name,
+                     'max_matched_publishers':0, 'matched_publishers':0,
+                     'messages_received':0}
+            attempts.append(attempt)
+            def receive(message):
+                attempt['messages_received']+=1
+                if not frame: frame.append(message)
+            subscription=node.create_subscription(Image,RGB_TOPIC,receive,qos)
+            try:
+                attempt_deadline=min(deadline,time.monotonic()+8) if qos is CAMERA_QOS else deadline
+                while not frame and time.monotonic()<attempt_deadline:
+                    rclpy.spin_once(node,timeout_sec=0.1)
+                    matched=matched_publishers(subscription)
+                    attempt['matched_publishers']=matched
+                    attempt['max_matched_publishers']=max(attempt['max_matched_publishers'],matched)
+            finally:
+                node.destroy_subscription(subscription)
+            if frame: break
+        publishers=camera_publishers()
+        delivery={'topic':RGB_TOPIC, 'publisher_count':publishers['publisher_count'],
+                  'offered_reliability':[p['offered_qos']['reliability'] for p in publishers['publishers']],
+                  'offered_durability':[p['offered_qos']['durability'] for p in publishers['publishers']],
+                  'attempts':attempts}
+        if not frame:
+            # Broker accepts only this bounded schema and exports it to the error
+            # artifact; raw container stderr/tracebacks are never forwarded.
+            print(json.dumps({'camera_timeout':delivery}),flush=True)
+            raise TimeoutError('No Aurora RGB frame within 15 seconds')
         message=frame[0]
         if (message.width,message.height)!=(640,400) or message.encoding not in ('rgb8','bgr8'):
             raise ValueError('Expected a 640x400 rgb8/bgr8 Aurora frame')
@@ -83,6 +133,6 @@ try:
         print(json.dumps({'topic':'/depth_cam/rgb/image_raw','width':640,'height':400,
                           'encoding':'rgb8','ros_domain_id':os.environ.get('ROS_DOMAIN_ID','0'),'rmw':get_rmw_implementation_identifier(),'pixels':base64.b64encode(pixels).decode(),
                           'stamp_sec':message.header.stamp.sec,'stamp_nanosec':message.header.stamp.nanosec,
-                          'frame_id':message.header.frame_id[:256], 'camera':camera_publishers()}),flush=True)
+                          'frame_id':message.header.frame_id[:256], 'camera':publishers, 'selected_qos':describe_qos(qos), 'delivery':delivery}),flush=True)
 finally:
     node.destroy_node();rclpy.shutdown()

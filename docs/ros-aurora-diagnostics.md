@@ -79,14 +79,23 @@ not a hardware/domain reconfiguration.
 `ros-inspect` now includes `camera`: the fixed topic, publisher count and each
 publisher's node/type and offered reliability, durability, history, depth,
 deadline, lifespan and liveliness. Counts/endpoints are a discovery snapshot and
-may change as publishers join/leave. The requested reader QoS is explicit
-**BEST_EFFORT / VOLATILE / KEEP_LAST depth 5**, compatible with live frames from
-best-effort or reliable and volatile or transient-local writers. Successful
-`camera.json` includes the same endpoint/QoS report. The previous observer already
-used ROS sensor-data QoS; this change makes it explicit and adds evidence rather
-than claiming QoS caused the live timeout. If capture still times out, run
-`ros-inspect` and review publisher count/QoS; a visible topic alone does not prove
-an active publisher or flowing camera frames. No publisher or driver is launched.
+may change as publishers join/leave. The primary reader QoS is explicit
+**RELIABLE / VOLATILE / KEEP_LAST depth 5**, matching the reported live Aurora
+writer. It is tried for up to eight seconds. If no frame arrives, the observer
+destroys that subscription and tries **BEST_EFFORT / VOLATILE** for the remainder
+of the same 15-second total deadline. The fallback preserves support for
+best-effort writers. Only one frame is retained/exported; no camera or publisher
+is launched. Discovery reports include both requested profiles; successful
+`camera.json` records `selected_qos` and delivery attempts.
+
+On timeout, `broker-error.log` contains bounded fixed-topic JSON with discovered
+publisher count, offered reliability/durability, and per-attempt current/max
+matched-publisher and received-message counts. A discovered publisher with zero
+matches indicates no observed DDS match; a match with zero messages distinguishes
+matching from actual callback delivery. A match does not prove that the camera
+is producing frames or that transport delivers samples. These are local RMW
+snapshots, not proof of why the live camera timed out. Raw container stderr is
+not forwarded. The job fails and exports no image archive on timeout.
 
 Rerun the newly downloaded standalone activation script as pi while the runner is
 idle to install this root-owned observer update. The upgrade recognizes the

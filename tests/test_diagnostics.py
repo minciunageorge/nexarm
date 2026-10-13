@@ -116,3 +116,25 @@ class DiagnosticsTests(unittest.TestCase):
    self.assertEqual(json.loads(config.read_text())['artifact_paths'],['/results'])
    self.assertTrue(json.loads(config.read_text())['diagnostics_enabled'])
    self.assertEqual(Path(destinations['readonly.py']).read_bytes(),(ROOT/'deploy/runner/readonly.py').read_bytes())
+
+ def test_timeout_diagnostics_reach_error_artifact_without_raw_stderr(self):
+  diagnostic={'topic':'/depth_cam/rgb/image_raw','publisher_count':1,'offered_reliability':['RELIABLE'],'offered_durability':['VOLATILE'],'attempts':[{'reliability':'RELIABLE','durability':'VOLATILE','matched_publishers':1,'max_matched_publishers':1,'messages_received':0}]}
+  def execute(command,**kwargs):
+   kwargs['stdout'].write(json.dumps({'camera_timeout':diagnostic,'untrusted':'never forwarded'}).encode())
+   kwargs['stderr'].write(b'never forwarded raw stderr\n'*200+b'TimeoutError: No Aurora RGB frame')
+   return subprocess.CompletedProcess(command,1)
+  with patch.object(broker.subprocess,'run',side_effect=execute):
+   with self.assertRaises(ValueError) as error:broker.observe('camera-one-frame','a'*64)
+   message=str(error.exception)
+   self.assertIn('"publisher_count": 1',message)
+   self.assertIn('"max_matched_publishers": 1',message)
+   self.assertIn('"messages_received": 0',message)
+   self.assertNotIn('never forwarded',message)
+  for field,value in [('topic','/other'),('publisher_count',True),('attempts',[]),('offered_reliability',['bad\ntext'])]:
+   invalid=dict(diagnostic);invalid[field]=value
+   with self.assertRaises(ValueError):broker.timeout_diagnostics(json.dumps({'camera_timeout':invalid}))
+
+ def test_previous_qos_broker_and_observer_are_safe_upgrade_inputs(self):
+  upgrade=load('upgrade_diagnostics')
+  for name in ['readonly.py','container_diagnostics.py']:
+   upgrade.require_known_file(name,(ROOT/'tests/fixtures'/('diagnostics-qos-'+name)).read_bytes(),(ROOT/'deploy/runner'/name).read_bytes())

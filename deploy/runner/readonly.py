@@ -40,6 +40,37 @@ def docker(arguments, output=None):
     return result.stdout
 
 
+def timeout_diagnostics(data):
+    """Copy only bounded fixed-topic numeric/QoS data from the observer."""
+    result=json.loads(data)['camera_timeout']
+    if not isinstance(result,dict): raise ValueError('Invalid timeout diagnostics')
+    if result.get('topic')!='/depth_cam/rgb/image_raw': raise ValueError('Unexpected diagnostic topic')
+    count=result['publisher_count']
+    if type(count) is not int or not 0<=count<=200: raise ValueError('Invalid publisher count')
+    clean={'topic':result['topic'],'publisher_count':count}
+    for field,allowed in [('offered_reliability',{'RELIABLE','BEST_EFFORT','SYSTEM_DEFAULT','UNKNOWN'}),
+                          ('offered_durability',{'VOLATILE','TRANSIENT_LOCAL','SYSTEM_DEFAULT','UNKNOWN'})]:
+        values=result[field]
+        if not isinstance(values,list) or len(values)>200 or any(type(v) is not str or v not in allowed for v in values):
+            raise ValueError('Invalid offered QoS')
+        clean[field]=values
+    attempts=result['attempts']
+    if not isinstance(attempts,list) or not 1<=len(attempts)<=2: raise ValueError('Invalid attempt count')
+    clean['attempts']=[]
+    for index,attempt in enumerate(attempts):
+        if not isinstance(attempt,dict): raise ValueError('Invalid delivery attempt')
+        reliability=('RELIABLE','BEST_EFFORT')[index]
+        if attempt.get('reliability')!=reliability or attempt.get('durability')!='VOLATILE':
+            raise ValueError('Invalid requested QoS')
+        item={'reliability':reliability,'durability':'VOLATILE'}
+        for field in ('matched_publishers','max_matched_publishers','messages_received'):
+            value=attempt[field]
+            if type(value) is not int or not 0<=value<=200: raise ValueError('Invalid delivery count')
+            item[field]=value
+        clean['attempts'].append(item)
+    return json.dumps(clean)
+
+
 def observe(operation, identifier):
     # No caller-controlled command/topic/UID/env. No helper copied into container.
     script=Path(__file__).with_name('container_diagnostics.py').read_bytes()
@@ -54,8 +85,16 @@ def observe(operation, identifier):
                        preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_FSIZE,(4*1024*1024,4*1024*1024)))
         if completed.returncode:
             errors.seek(0); reason=errors.read(4096)
-            if b'TimeoutError: No Aurora RGB frame' in reason:
-                raise ValueError('No Aurora RGB frame within 15 seconds; inspect the existing publisher/domain')
+            details=None
+            if operation=='camera-one-frame':
+                output.seek(0)
+                try:
+                    details=timeout_diagnostics(output.read(64*1024+1))
+                except (ValueError,KeyError,TypeError):
+                    pass
+            if details is not None or b'TimeoutError: No Aurora RGB frame' in reason:
+                raise ValueError('No Aurora RGB frame within 15 seconds; '+
+                                 (details or 'No valid bounded delivery diagnostics returned'))
             if b'Expected a 640x400' in reason:
                 raise ValueError('Existing camera frame has unsupported dimensions or encoding')
             if b'ModuleNotFoundError' in reason or b'ImportError' in reason:
