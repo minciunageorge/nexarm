@@ -19,6 +19,9 @@ useradd --system --user-group --create-home --home-dir /var/lib/nexarm-runner --
 chmod 700 /var/lib/nexarm-runner
 install -d -o root -g root -m 755 /usr/local/lib/nexarm-runner
 install -d -o root -g root -m 700 /etc/nexarm-runner
+for helper in repository_gate.py container_diagnostics.py; do
+  install -o root -g root -m 644 "$script_dir/runner/$helper" "/usr/local/lib/nexarm-runner/$helper"
+done
 install -o root -g root -m 644 "$script_dir/runner/readonly.py" /usr/local/lib/nexarm-runner/readonly.py
 install -o root -g root -m 755 "$script_dir/runner/nexarm-readonly" /usr/local/sbin/nexarm-readonly
 # ID is a verified non-secret immutable Docker identity, not shell-generated code.

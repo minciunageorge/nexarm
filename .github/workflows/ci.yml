@@ -19,3 +19,7 @@ jobs:
       - name: ROS2 and synthetic camera integration test
         run: |
           docker run --rm -i --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 --tmpfs /tmp --tmpfs /results:uid=1000,gid=1000 nexarm:ci python3 < tests/ros_runtime.py
+      - name: Fixed observer graph and one-frame diagnostics (native isolated container)
+        run: |
+          docker build -t nexarm:diagnostics .
+          python3 tests/ros_diagnostics_runtime.py

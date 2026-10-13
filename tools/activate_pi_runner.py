@@ -5,6 +5,7 @@ from collections import deque
 from pathlib import PurePosixPath
 import hashlib
 import json
+import sys
 import os
 from pathlib import Path
 import platform
@@ -19,7 +20,9 @@ PAYLOAD = None  # Filled only in the downloadable standalone build.
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ['deploy/bootstrap-preserve.sh', 'deploy/install-pi-runner-host.sh',
          'deploy/runner/readonly.py', 'deploy/runner/nexarm-readonly',
-         'deploy/runner/readonly.sudoers', 'deploy/runner/nexarm-actions.service']
+         'deploy/runner/readonly.sudoers', 'deploy/runner/nexarm-actions.service',
+         'deploy/runner/repository_gate.py', 'deploy/runner/container_diagnostics.py',
+         'deploy/runner/upgrade_diagnostics.py']
 
 
 def release_metadata(data):
@@ -205,12 +208,27 @@ finally:
     return True
 
 
-def ensure_host_setup(stage, container_id):
+def ensure_host_setup(stage, container_id, enrollment=None):
     """Reuse identical protected host setup, never reinstall or overwrite it."""
     installed = subprocess.run(['sudo', 'test', '-e', '/usr/local/sbin/nexarm-readonly']).returncode == 0
     if not installed:
         run(['sudo', 'bash', str(stage / 'deploy/install-pi-runner-host.sh')])
+        if enrollment is not None:
+            run(['sudo','visudo','-cf',str(stage/'deploy/runner/readonly.sudoers')])
+            run(['sudo','/usr/bin/python3','-I',str(stage/'deploy/runner/upgrade_diagnostics.py'),str(stage/'deploy/runner')],
+                input=json.dumps(dict(enrollment,container_id=container_id)),text=True)
         return False
+    groups = subprocess.check_output(['id', '-Gn', 'nexarm-runner'], text=True).split()
+    if set(groups) & {'root', 'sudo', 'docker'}:
+        raise ValueError('Runner account has unexpected privileged groups')
+    guard = Path('/home/pi/.local/share/nexarm/protect-existing').read_text().strip()
+    if guard != container_id:
+        raise ValueError('Preservation guard differs from live container; review required')
+    if enrollment is not None:
+        assert_runner_idle()
+        run(['sudo','visudo','-cf',str(stage/'deploy/runner/readonly.sudoers')])
+        run(['sudo','/usr/bin/python3','-I',str(stage/'deploy/runner/upgrade_diagnostics.py'),str(stage/'deploy/runner')],
+            input=json.dumps(dict(enrollment,container_id=container_id)),text=True)
     destinations = {'deploy/runner/readonly.py': '/usr/local/lib/nexarm-runner/readonly.py',
                     'deploy/runner/nexarm-readonly': '/usr/local/sbin/nexarm-readonly',
                     'deploy/runner/readonly.sudoers': '/etc/sudoers.d/nexarm-readonly'}
@@ -223,12 +241,6 @@ def ensure_host_setup(stage, container_id):
         owner, mode = subprocess.check_output(['sudo', 'stat', '-c', '%u %a', target], text=True).split()
         if owner != '0' or int(mode, 8) & 0o022:
             raise ValueError('Installed host file has unsafe ownership or permissions')
-    groups = subprocess.check_output(['id', '-Gn', 'nexarm-runner'], text=True).split()
-    if set(groups) & {'root', 'sudo', 'docker'}:
-        raise ValueError('Runner account has unexpected privileged groups')
-    guard = Path('/home/pi/.local/share/nexarm/protect-existing').read_text().strip()
-    if guard != container_id:
-        raise ValueError('Preservation guard differs from live container; review required')
     # Installed broker also validates its root-owned config and enrolled identity.
     run(['sudo', '-H', '-u', 'nexarm-runner', '/usr/bin/sudo', '-n', '/usr/local/sbin/nexarm-readonly', 'probe'])
     changed = upgrade_runner_unit(stage / 'deploy/runner/nexarm-actions.service')
@@ -382,7 +394,19 @@ def main():
             target = stage / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(contents)
-        unit_changed = ensure_host_setup(stage, baseline.split()[0])
+        # A typed assertion alone cannot authorize a public robot-hosted runner.
+        # Operator supplies a metadata-read-only token locally, not to workflows.
+        metadata_token=getpass.getpass('GitHub fine-grained metadata-read token for the PRIVATE repository (hidden): ')
+        sys.path.insert(0,str(stage/'deploy/runner'))
+        from repository_gate import repository_metadata
+        repository_metadata(repository,metadata_token)
+        registered='/var/lib/nexarm-runner/actions-runner/.runner'
+        if subprocess.run(['sudo','test','-f',registered]).returncode==0:
+            check='import json,sys; from pathlib import Path; actual=json.loads(Path(sys.argv[1]).read_text()).get("gitHubUrl","").rstrip("/").lower(); assert actual==sys.argv[2].lower(), "Selected repository differs from preserved runner registration"'
+            run(['sudo','-H','-u','nexarm-runner','/usr/bin/python3','-I','-c',check,registered,f'https://github.com/{repository}'])
+        unit_changed = ensure_host_setup(stage, baseline.split()[0],
+                                         {'repository':repository,'token':metadata_token})
+        metadata_token=None
         result = subprocess.run(['systemctl', 'is-active', '--quiet', 'nexarm-actions.service'])
         if result.returncode == 0:
             if not refresh_running_runner(unit_changed):

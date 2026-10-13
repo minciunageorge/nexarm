@@ -116,7 +116,9 @@ class ActivationTests(unittest.TestCase):
         import subprocess
         def command(args):
             return subprocess.CompletedProcess(args,1 if args[1] in ['cmp'] or '-L' in args else 0)
-        with patch.object(activation.subprocess,'run',side_effect=command),patch.object(activation,'run') as run:
+        from unittest.mock import MagicMock
+        guard=MagicMock();guard.read_text.return_value='a'*64+'\n'
+        with patch.object(activation.subprocess,'run',side_effect=command),patch.object(activation.subprocess,'check_output',return_value='nexarm-runner\n'),patch.object(activation,'Path',return_value=guard),patch.object(activation,'run') as run:
             with self.assertRaises(ValueError): activation.ensure_host_setup(Path('/tmp/stage'),'a'*64)
             run.assert_not_called()
 

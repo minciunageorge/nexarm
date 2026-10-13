@@ -14,6 +14,10 @@ IDENTIFIER = 'a'*64
 
 
 class BrokerTests(unittest.TestCase):
+    def setUp(self):
+        gate=patch.object(broker, "private_gate")
+        gate.start();self.addCleanup(gate.stop)
+
     def test_non_read_operations_rejected_before_docker(self):
         with patch.object(broker, 'docker') as docker:
             for operation in ['deploy', 'camera', 'exec', 'stop', 'run', 'motion']:

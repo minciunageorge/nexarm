@@ -1,5 +1,9 @@
 # nexarm
 
+[Issue #1: private-repository ROS2 and Aurora diagnostics](docs/ros-aurora-diagnostics.md)
+adds fixed graph inspection and one-frame capture. Public Pi workflows fail closed;
+make this repository private before the one-time approved broker upgrade.
+
 Development and deployment scaffold for a **64-bit Raspberry Pi 5**, SSH user
 `pi`, and Docker container `nexarm` running **ROS2 Humble / Ubuntu 22.04**.
 The repository initially contains no robot packages or hardware configuration.

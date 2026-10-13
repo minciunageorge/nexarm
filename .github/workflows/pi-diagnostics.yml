@@ -1,0 +1,41 @@
+name: Pi approved ROS and Aurora diagnostics
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Explicit fixed diagnostic (one still frame does not launch a driver)
+        required: true
+        type: choice
+        default: ros-inspect
+        options: [ros-inspect, camera-one-frame]
+permissions:
+  contents: read
+concurrency:
+  group: pi-readonly
+  cancel-in-progress: false
+jobs:
+  diagnose:
+    # Public repositories fail before allocation of any self-hosted runner.
+    if: github.event.repository.private == true && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    environment: pi-diagnostics
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Run only the installed approved observer
+        env:
+          OPERATION: ${{ inputs.operation }}
+        run: python3 tools/pi_runner_job.py "$OPERATION"
+      - name: Export diagnostic artifacts and failure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexarm-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Clean job artifacts
+        if: always()
+        run: rm -rf -- artifacts

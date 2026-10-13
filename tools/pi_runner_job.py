@@ -7,11 +7,11 @@ import subprocess
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['probe', 'discover-existing', 'collect-existing'])
+    parser.add_argument('operation', choices=['probe', 'discover-existing', 'collect-existing','ros-inspect','camera-one-frame'])
     parser.add_argument('--output-dir', type=Path, default=Path('artifacts'))
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    target = args.output_dir / ('results.tar.gz' if args.operation == 'collect-existing' else 'metadata.txt')
+    target = args.output_dir / ('results.tar.gz' if args.operation in ('collect-existing','camera-one-frame') else 'metadata.txt')
     with target.open('wb') as output, (args.output_dir / 'broker-error.log').open('wb') as errors:
         result = subprocess.run(['/usr/bin/sudo', '-n', '/usr/local/sbin/nexarm-readonly', args.operation],
                                 stdout=output, stderr=errors, timeout=480)
