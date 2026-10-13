@@ -13,7 +13,7 @@ import tempfile
 
 CONFIG = Path('/etc/nexarm-runner/readonly.json')
 DOCKER = '/usr/bin/docker'
-OPERATIONS = ('probe', 'discover-existing', 'collect-existing', 'ros-inspect', 'camera-one-frame', 'aurora-health')
+OPERATIONS = ('probe', 'discover-existing', 'collect-existing', 'ros-inspect', 'camera-one-frame', 'aurora-health', 'aurora-discover', 'aurora-recover')
 
 
 def validate(config):
@@ -38,6 +38,35 @@ def docker(arguments, output=None):
     if result.returncode:
         raise RuntimeError('Docker read operation failed; confirm container and enrolled paths')
     return result.stdout
+
+
+def host_usb_inventory():
+    """Fixed sysfs attributes only; never open USB, reset, unbind or read serials."""
+    root=Path('/sys/bus/usb/devices')
+    if not root.exists():return {'visible':False,'devices':[]}
+    entries=sorted(root.iterdir(),key=lambda path:path.name)
+    if len(entries)>256:raise ValueError('Host USB inventory limit exceeded')
+    devices=[]
+    for path in entries:
+        try:
+            vendor=(path/'idVendor').read_text()[:16].strip()
+            product=(path/'idProduct').read_text()[:16].strip()
+        except OSError:continue
+        if not re.fullmatch('[0-9a-fA-F]{4}',vendor) or not re.fullmatch('[0-9a-fA-F]{4}',product):continue
+        item={'sysfs_name':path.name,'vendor_id':vendor,'product_id':product}
+        for key in ('manufacturer','product','authorized','busnum','devnum','speed','bConfigurationValue'):
+            try:
+                with (path/key).open() as source:item[key]=source.read(128).strip()
+            except OSError:pass
+        interfaces=[]
+        for interface in entries:
+            if interface.name.startswith(path.name+':'):
+                try:driver=Path(os.readlink(interface/'driver')).name
+                except OSError:driver=None
+                interfaces.append({'interface':interface.name,'driver':driver})
+        item['interfaces']=interfaces
+        devices.append(item)
+    return {'visible':True,'devices':devices,'scope':'Presence/authorization/interface binding only; no transfer or reset'}
 
 
 def timeout_diagnostics(data):
@@ -103,7 +132,12 @@ def observe(operation, identifier):
         output.seek(0); data=output.read(4*1024*1024+1)
     if len(data)>4*1024*1024: raise ValueError('Observer output limit exceeded')
     result=json.loads(data)
-    if operation=='aurora-health':
+    if operation in ('aurora-discover','aurora-recover'):
+        if result.get('operation')!=operation or result.get('recovery',{}).get('enabled') is not False or result.get('recovery',{}).get('status')!='refused':
+            raise ValueError('Discovery cannot enable camera recovery')
+        result['host_usb']=host_usb_inventory()
+        print(json.dumps(result))
+    elif operation=='aurora-health':
         expected={'rgb':'/depth_cam/rgb/image_raw','depth':'/depth_cam/depth/image_raw','ir':'/depth_cam/ir/image_raw'}
         streams=result.get('streams')
         if result.get('operation')!='aurora-health' or not isinstance(streams,dict) or set(streams)!=set(expected):
@@ -132,13 +166,13 @@ def observe(operation, identifier):
 def execute(operation, config):
     if operation not in OPERATIONS:
         raise ValueError('Only read-only operations are enabled')
-    if operation in ('ros-inspect', 'camera-one-frame', 'aurora-health') and config.get('diagnostics_enabled') is not True:
+    if operation in ('ros-inspect', 'camera-one-frame', 'aurora-health', 'aurora-discover', 'aurora-recover') and config.get('diagnostics_enabled') is not True:
         raise ValueError('ROS/camera diagnostics are not enrolled')
     identifier, paths = validate(config)
     current = docker(['inspect', '-f', '{{.Id}}', 'nexarm']).decode().strip()
     if current != identifier:
         raise ValueError('Container identity changed; administrator review required')
-    if operation in ('ros-inspect','camera-one-frame','aurora-health'):
+    if operation in ('ros-inspect','camera-one-frame','aurora-health','aurora-discover','aurora-recover'):
         before=docker(['inspect','-f','{{.Id}} {{.State.Running}} {{.State.StartedAt}}',identifier])
         observe(operation,identifier)
         if before!=docker(['inspect','-f','{{.Id}} {{.State.Running}} {{.State.StartedAt}}',identifier]):

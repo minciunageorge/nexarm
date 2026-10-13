@@ -158,6 +158,18 @@ class DiagnosticsTests(unittest.TestCase):
   self.assertNotIn('*',policy)
   self.assertNotIn('NOPASSWD: ALL',policy)
   workflow=(ROOT/'.github/workflows/pi-diagnostics.yml').read_text()
-  self.assertIn('options: [ros-inspect, camera-one-frame, aurora-health]',workflow)
+  self.assertIn('options: [ros-inspect, camera-one-frame, aurora-health, aurora-discover, aurora-recover]',workflow)
   self.assertIn("'.nexarm/aurora-trigger.txt'",workflow)
   self.assertNotIn('pull_request',workflow)
+
+ def test_previous_health_files_can_upgrade_to_discovery(self):
+  upgrade=load('upgrade_diagnostics')
+  for name in ['readonly.py','readonly.sudoers','container_diagnostics.py']:
+   upgrade.require_known_file(name,(ROOT/'tests/fixtures'/('diagnostics-health-'+name)).read_bytes(),(ROOT/'deploy/runner'/name).read_bytes())
+
+ def test_discovery_rejects_claims_of_enabled_recovery(self):
+  def execute(command,**kwargs):
+   kwargs['stdout'].write(json.dumps({'operation':'aurora-recover','recovery':{'enabled':True,'status':'restarted'}}).encode())
+   return subprocess.CompletedProcess(command,0)
+  with patch.object(broker.subprocess,'run',side_effect=execute):
+   with self.assertRaisesRegex(ValueError,'cannot enable camera recovery'):broker.observe('aurora-recover','a'*64)

@@ -40,3 +40,9 @@ jobs on the Pi. Cloud code must not activate or modify the live Pi.
 The user also authorizes aurora-health: fixed RGB/depth/IR observer callback
 counters and header timestamps, with bounded reliable/best-effort readers.
 No USB/device changes, package installation, driver launch or motion is authorized.
+
+The latest user clarification authorizes read-only Aurora node/process/component
+and USB presence discovery for `ros2 launch deptrum-ros-driver-aurora930
+aurora930_launch.py`. Only enable recovery after live evidence proves camera-only
+ownership and restart semantics. Current aurora-recover is a report-only refusal;
+no process signals, lifecycle changes, USB resets or driver launch are implemented.

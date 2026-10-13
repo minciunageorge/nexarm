@@ -171,3 +171,51 @@ Tests cover RGB-only silence, all-stream silence with matching publishers, advan
 and frozen stamps, missing/unmatched publishers and safe upgrade recognition. Native
 Humble integration uses only disposable synthetic publishers; physical Pi/Aurora
 behavior is untested by the cloud environment.
+
+## Aurora process/component/USB discovery and recovery status
+
+The current authorized next step is **discovery first**. The known official launch
+signature is `ros2 launch deptrum-ros-driver-aurora930 aurora930_launch.py` inside
+nexarm; known node names are `/aurora` and `/depth_cam`. A launch signature or node
+name alone does not prove that a process restart is camera-only.
+
+Rerun the newly downloaded bootstrap as pi while idle, then select
+`aurora-discover` in the existing diagnostics workflow. The commit-trigger route
+also accepts changes to `.nexarm/aurora-discovery-trigger.txt` with `Aurora discover`
+in the commit message. No trigger file is changed by this implementation.
+
+The `metadata.txt` result contains:
+
+- Camera node services and the owners of the three fixed Image publishers.
+- Read-only ROS component-manager `ListNodes` responses, including other loaded
+  nodes, or explicit unavailable/timeout results within a four-second total budget.
+- Matching DePtrum launch/process candidates and descendants: PID/parent, UID,
+  executable if readable, state, thread count and wait channel. Component-container
+  candidates are flagged. Full command lines, environment, descriptors and process
+  memory are never exported. Candidate PIDs are not proven ROS-node/PID mappings.
+- Host and container USB sysfs presence, vendor/product IDs, authorization and
+  interface bindings; container USB-node ownership/modes/access as UID 65534.
+  No USB device is opened, reset, unbound or modified; serial numbers and broad
+  kernel logs are not collected. Presence/binding does not prove successful transfers.
+- Fast DDS shared-memory ownership/access metadata. A root-owned writer and the
+  unprivileged observer may have a transport/permission issue even when DDS matches;
+  all-stream silence does not by itself prove driver/USB failure.
+
+`aurora-recover` currently **refuses all restart actions**, returns the same discovery
+report and automatically rechecks ten-second stream health. It is report-only:
+there is no process signal, shell command, camera launch, lifecycle state change,
+component load/unload, USB reset or container restart implementation. Even detecting
+lifecycle services cannot enable it. Bootstrap preserves this refusal and cannot
+arm recovery through configuration. Runner registration/container/account/guard are
+preserved; only exact discovery/report commands are added to sudoers.
+
+The live process/component topology and restart mechanism cannot be proven from
+this cloud workspace. Review the discovery artifact first. A subsequent narrowly
+approved implementation can then add the verified camera-only restart, followed by
+stream-health and one-frame checks automatically. **That mutation stage is not yet
+implemented or enabled**, following the user's clarification to remain read-only
+unless isolation is proven. Do not manually kill a PID or rerun the launch command
+on the basis of this report; it may create a duplicate driver or affect shared code.
+
+Tests use synthetic ROS/process/USB fixtures and disposable local containers; no
+live Pi process inspection or camera restart was performed by this change.

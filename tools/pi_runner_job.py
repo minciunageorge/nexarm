@@ -7,7 +7,7 @@ import subprocess
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['probe', 'discover-existing', 'collect-existing','ros-inspect','camera-one-frame','aurora-health'])
+    parser.add_argument('operation', choices=['probe', 'discover-existing', 'collect-existing','ros-inspect','camera-one-frame','aurora-health','aurora-discover','aurora-recover'])
     parser.add_argument('--output-dir', type=Path, default=Path('artifacts'))
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)

@@ -3,6 +3,8 @@ import base64
 import ctypes
 import json
 import os
+from pathlib import Path
+import re
 import resource
 import signal
 import sys
@@ -142,12 +144,199 @@ def aurora_health():
             node.destroy_subscription(subscription)
 
 
+OFFICIAL_PACKAGE = 'deptrum-ros-driver-aurora930'
+OFFICIAL_LAUNCH = 'aurora930_launch.py'
+CAMERA_NODES = ('/aurora', '/depth_cam')
+
+
+def safe_text(path, limit=4096):
+    try:
+        with path.open('rb') as source:
+            return source.read(limit).decode('utf-8', errors='replace')
+    except OSError:
+        return None
+
+
+def process_inventory():
+    records = {}
+    # No environ, full command line, descriptors or memory contents exported.
+    # Arguments are examined only for the known launch signature/remap hints.
+    entries = sorted((p for p in Path('/proc').iterdir() if p.name.isdecimal()), key=lambda p:int(p.name))
+    if len(entries)>1024: raise RuntimeError('Process inventory limit exceeded')
+    for path in entries:
+        status = safe_text(path/'status')
+        cmdline = safe_text(path/'cmdline', 16384)
+        if status is None: continue
+        fields = dict(line.split(':',1) for line in status.splitlines() if ':' in line)
+        arguments = (cmdline or '').split('\x00')
+        official = any(i>0 and Path(arguments[i-1]).name=='ros2' and arguments[i:i+3]==['launch',OFFICIAL_PACKAGE,OFFICIAL_LAUNCH]
+                       for i in range(max(0,len(arguments)-2)))
+        try:
+            executable = os.readlink(path/'exe')
+        except OSError:
+            executable = None
+        basename = Path(executable).name if executable else fields.get('Name','').strip()
+        component = basename in ('component_container','component_container_mt','component_container_isolated')
+        camera_hint = official or any('deptrum' in value.lower() or 'aurora930' in value.lower()
+                                     for value in [basename,*(arguments[:2])])
+        camera_hint = camera_hint or any(value in ('__node:=depth_cam','__node:=aurora') for value in arguments)
+        try:
+            record = {'pid':int(path.name), 'ppid':int(fields.get('PPid','0')),
+                      'uid':int(fields.get('Uid','-1').split()[0]),
+                      'state':fields.get('State','unknown').strip()[:64],
+                      'threads':int(fields.get('Threads','0')),
+                      'name':fields.get('Name','').strip()[:64],
+                      'executable':executable, 'official_launch':official,
+                      'component_container':component, 'camera_hint':camera_hint,
+                      'argv_readable':cmdline is not None, 'node_pid_mapping_proven':False}
+        except ValueError: continue
+        record['wait_channel']=safe_text(path/'wchan',64)
+        raw_stat=safe_text(path/'stat',4096)
+        if raw_stat:
+            try:record['start_ticks']=int(raw_stat.rsplit(')',1)[1].split()[19])
+            except (ValueError,IndexError):pass
+        if official:record['launch_signature']=['ros2','launch',OFFICIAL_PACKAGE,OFFICIAL_LAUNCH]
+        records[record['pid']] = record
+    selected = {pid for pid,record in records.items() if record['camera_hint'] or record['component_container']}
+    # Include descendants, bounded by the same inventory cap; never signal them.
+    for _ in range(len(records)):
+        descendants={pid for pid,record in records.items() if record['ppid'] in selected}
+        if descendants<=selected:break
+        selected.update(descendants)
+    if len(selected)>64: raise RuntimeError('Camera process candidate limit exceeded')
+    return [records[pid] for pid in sorted(selected)]
+
+
+def usb_inventory():
+    devices=[]
+    root=Path('/sys/bus/usb/devices')
+    if not root.exists():return {'visible':False,'devices':[]}
+    entries=sorted(root.iterdir(),key=lambda path:path.name)
+    if len(entries)>256:raise RuntimeError('USB inventory limit exceeded')
+    for path in entries:
+        vendor=safe_text(path/'idVendor',16);product=safe_text(path/'idProduct',16)
+        if vendor is None or product is None:continue
+        vendor=vendor.strip();product=product.strip()
+        if not re.fullmatch('[0-9a-fA-F]{4}',vendor) or not re.fullmatch('[0-9a-fA-F]{4}',product):continue
+        info={'sysfs_name':path.name,'vendor_id':vendor,'product_id':product}
+        for key in ('manufacturer','product','authorized','busnum','devnum','speed','bConfigurationValue'):
+            value=safe_text(path/key,128)
+            if value is not None:info[key]=value.strip()
+        try:info['driver']=Path(os.readlink(path/'driver')).name
+        except OSError:info['driver']=None
+        devices.append(info)
+    return {'visible':True,'devices':devices,
+            'limitations':'Presence/authorized/binding only; no transfer, reset, unbind or kernel-log access'}
+
+
+def device_visibility():
+    root=Path('/dev/bus/usb');devices=[]
+    if root.exists():
+        for bus in sorted(root.iterdir())[:64]:
+            if not bus.name.isdecimal() or not bus.is_dir():continue
+            for path in sorted(bus.iterdir())[:128]:
+                if not path.name.isdecimal():continue
+                info=path.stat()
+                devices.append({'path':str(path),'uid':info.st_uid,'gid':info.st_gid,
+                                'mode':oct(info.st_mode & 0o777),
+                                'observer_readable':os.access(path,os.R_OK),
+                                'observer_writable':os.access(path,os.W_OK)})
+                if len(devices)>=128: return {'devices':devices,'truncated':True}
+    return {'devices':devices,'truncated':False}
+
+
+def shared_memory_visibility():
+    # Metadata only, for diagnosing a root-owned writer vs UID 65534 DDS reader.
+    root=Path('/dev/shm');items=[]
+    if not root.exists():return []
+    entries=sorted(root.iterdir(),key=lambda path:path.name)
+    if len(entries)>256:raise RuntimeError('Shared memory inventory limit exceeded')
+    for path in entries:
+        if not path.name.startswith(('fastrtps','fastdds')):continue
+        try:info=path.lstat()
+        except OSError:continue
+        items.append({'name':path.name,'uid':info.st_uid,'gid':info.st_gid,
+                      'mode':oct(info.st_mode & 0o777),'mtime_ns':info.st_mtime_ns,
+                      'observer_readable':os.access(path,os.R_OK),
+                      'observer_writable':os.access(path,os.W_OK)})
+    return items
+
+
+def component_membership(services):
+    managers=[name for name,types in services if 'composition_interfaces/srv/ListNodes' in types]
+    if len(managers)>16:raise RuntimeError('Component manager limit exceeded')
+    if not managers:return []
+    try:
+        from composition_interfaces.srv import ListNodes
+    except ImportError:
+        return [{'service':name,'status':'module_unavailable'} for name in managers]
+    results=[];deadline=time.monotonic()+4
+    for name in managers:
+        if time.monotonic()>=deadline:
+            results.append({'service':name,'status':'budget_exhausted'});continue
+        client=node.create_client(ListNodes,name)
+        try:
+            if not client.wait_for_service(timeout_sec=0.1):
+                results.append({'service':name,'status':'unavailable'});continue
+            future=client.call_async(ListNodes.Request())
+            rclpy.spin_until_future_complete(node,future,timeout_sec=max(0,deadline-time.monotonic()))
+            if not future.done() or future.exception() is not None:
+                results.append({'service':name,'status':'timeout_or_error'});continue
+            response=future.result()
+            if len(response.full_node_names)>200 or len(response.unique_ids)!=len(response.full_node_names):
+                raise RuntimeError('Component membership limit/shape exceeded')
+            results.append({'service':name,'status':'reported','nodes':list(response.full_node_names),
+                            'component_ids':list(response.unique_ids),
+                            'includes_known_camera':any(n in CAMERA_NODES for n in response.full_node_names),
+                            'other_nodes_present':any(n not in CAMERA_NODES for n in response.full_node_names)})
+        finally:node.destroy_client(client)
+    return results
+
+
+def aurora_discover():
+    deadline=time.monotonic()+3
+    while time.monotonic()<deadline:rclpy.spin_once(node,timeout_sec=0.1)
+    nodes=node.get_node_names_and_namespaces()
+    services=node.get_service_names_and_types()
+    if len(nodes)>200 or len(services)>200:raise RuntimeError('Discovery graph limit exceeded')
+    camera_nodes=[]
+    for name,namespace in nodes:
+        full=namespace.rstrip('/')+'/'+name
+        if full not in CAMERA_NODES:continue
+        offered=node.get_service_names_and_types_by_node(name,namespace)
+        if len(offered)>64:raise RuntimeError('Camera service limit exceeded')
+        camera_nodes.append({'name':full,'services':offered,
+                             'has_lifecycle_services':any('lifecycle_msgs/srv/ChangeState' in types for _,types in offered)})
+    publishers={}
+    for channel,topic in HEALTH_TOPICS.items():
+        endpoints=node.get_publishers_info_by_topic(topic)
+        if len(endpoints)>64:raise RuntimeError('Camera endpoint limit exceeded')
+        publishers[channel]={'topic':topic,'publisher_count':node.count_publishers(topic),
+                             'nodes':[endpoint.node_namespace.rstrip('/')+'/'+endpoint.node_name for endpoint in endpoints]}
+    components=component_membership(services)
+    return {'operation':'aurora-discover','nodes':camera_nodes,'camera_publishers':publishers,
+            'component_manager_services':components, 'processes':process_inventory(),
+            'container_usb':usb_inventory(),'container_devices':device_visibility(),
+            'observer_uid':os.geteuid(), 'dds_shared_memory':shared_memory_visibility(),
+            'ros_domain_id':os.environ.get('ROS_DOMAIN_ID','0'),'rmw':get_rmw_implementation_identifier(),
+            'recovery':{'enabled':False,'status':'refused',
+                        'reason':'Live process/component ownership and camera-only restart mechanism are not yet proven',
+                        'official_launch':['ros2','launch',OFFICIAL_PACKAGE,OFFICIAL_LAUNCH],
+                        'container_restart_allowed':False,'process_signals_allowed':False}}
+
+
 operation=sys.argv[1]
-if operation not in ('ros-inspect','camera-one-frame','aurora-health'): raise SystemExit('Unsupported observer operation')
+if operation not in ('ros-inspect','camera-one-frame','aurora-health','aurora-discover','aurora-recover'): raise SystemExit('Unsupported observer operation')
 rclpy.init()
 node=rclpy.create_node('nexarm_diagnostic_observer',enable_rosout=False,start_parameter_services=False)
 try:
-    if operation=='aurora-health':
+    if operation in ('aurora-discover','aurora-recover'):
+        report=aurora_discover()
+        if operation=='aurora-recover':
+            report['operation']='aurora-recover'
+            report['health']=aurora_health()
+        print(json.dumps(report),flush=True)
+    elif operation=='aurora-health':
         print(json.dumps(aurora_health()),flush=True)
     elif operation=='ros-inspect':
         deadline=time.monotonic()+3

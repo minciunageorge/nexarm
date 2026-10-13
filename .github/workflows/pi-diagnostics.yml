@@ -3,17 +3,18 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Explicit fixed diagnostic (one still frame does not launch a driver)
+        description: Fixed diagnostic; recovery is currently report-only and never restarts a driver
         required: true
         type: choice
         default: ros-inspect
-        options: [ros-inspect, camera-one-frame, aurora-health]
+        options: [ros-inspect, camera-one-frame, aurora-health, aurora-discover, aurora-recover]
   push:
     branches: [main]
     paths:
       - '.nexarm/camera-trigger.txt'
       - '.nexarm/ros-trigger.txt'
       - '.nexarm/aurora-trigger.txt'
+      - '.nexarm/aurora-discovery-trigger.txt'
 permissions:
   contents: read
 concurrency:
@@ -31,7 +32,7 @@ jobs:
           persist-credentials: false
       - name: Run only the installed approved observer
         env:
-          OPERATION: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, 'Aurora health') && 'aurora-health' || github.event_name == 'push' && contains(github.event.head_commit.message, 'ROS inspect') && 'ros-inspect' || github.event_name == 'push' && 'camera-one-frame' || inputs.operation }}
+          OPERATION: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, 'Aurora discover') && 'aurora-discover' || github.event_name == 'push' && contains(github.event.head_commit.message, 'Aurora health') && 'aurora-health' || github.event_name == 'push' && contains(github.event.head_commit.message, 'ROS inspect') && 'ros-inspect' || github.event_name == 'push' && 'camera-one-frame' || inputs.operation }}
         run: python3 tools/pi_runner_job.py "$OPERATION"
       - name: Export diagnostic artifacts and failure evidence
         if: always()
