@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 LEGACY={'readonly.py':{'3c1c2b4d2620ba138997734d080403bd175f973f4add6f1430f6af4d0f7182b4','abb388e20fc92eb1f5acabe5f45de4af0e8880f1a6d4bee267fbfc477208d01e'},
+        'container_diagnostics.py':{'af82e3af261924f3437ff9b6d049a236e48c63390b6776f9652f075f181fa637'},
         'readonly.sudoers':{'c27aa3af2dc72986f56ae3c5785e715687edaa4b4d7ba2e2ff050c092fac7251'}}
 DESTINATIONS={'readonly.py':'/usr/local/lib/nexarm-runner/readonly.py',
               'readonly.sudoers':'/etc/sudoers.d/nexarm-readonly',
@@ -59,7 +60,7 @@ def main():
                     require_known_file(name,backup.read_bytes(),desired)
                 else:
                     backups.append((backup,current))
-        elif name in LEGACY:raise SystemExit('Expected existing broker/policy missing')
+        elif name in ('readonly.py','readonly.sudoers'):raise SystemExit('Expected existing broker/policy missing')
     # Grant commands only after validating all enrolled files and config.
     for backup,current in backups:
         fd=os.open(backup,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)

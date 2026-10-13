@@ -67,7 +67,7 @@ class DiagnosticsTests(unittest.TestCase):
 
  def test_broker_upgrade_recognizes_only_legacy_or_desired_files(self):
   upgrade=load('upgrade_diagnostics')
-  for name in ['readonly.py','readonly.sudoers']:
+  for name in ['readonly.py','readonly.sudoers','container_diagnostics.py']:
    old=(ROOT/'tests/fixtures'/('diagnostics-legacy-'+name)).read_bytes()
    desired=(ROOT/'deploy/runner'/name).read_bytes()
    upgrade.require_known_file(name,old,desired)
@@ -97,7 +97,7 @@ class DiagnosticsTests(unittest.TestCase):
    destinations={name:str(mapped(path)) for name,path in upgrade.DESTINATIONS.items()}
    for name,destination in destinations.items():
     path=Path(destination);path.parent.mkdir(parents=True,exist_ok=True)
-    source=ROOT/'deploy/runner'/name
+    source=(ROOT/'tests/fixtures/diagnostics-legacy-container_diagnostics.py') if name=='container_diagnostics.py' else ROOT/'deploy/runner'/name
     path.write_bytes((ROOT/'tests/fixtures/diagnostics-gated-readonly.py').read_bytes() if name=='readonly.py' else source.read_bytes())
     path.chmod(0o644)
    backup=Path(destinations['readonly.py']+'.pre-diagnostics.bak')

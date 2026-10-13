@@ -4,7 +4,7 @@ This stage adds only two fixed broker commands:
 
 | Command | Behavior |
 | --- | --- |
-| `ros-inspect` | Discover ROS nodes/topics for three seconds, return JSON with the inherited domain and middleware identifier |
+| `ros-inspect` | Discover ROS nodes/topics for three seconds, return JSON with the inherited domain/middleware and exact fixed RGB publisher count/offered QoS |
 | `camera-one-frame` | Subscribe to `/depth_cam/rgb/image_raw`, export exactly one 640×400 RGB still and timestamp metadata |
 
 The existing `nexarm` container ID, start time, configuration and runner registration
@@ -16,7 +16,9 @@ container-preservation guard remains unchanged.
 
 The owner explicitly permits this repository to remain public for this stage.
 No visibility change, separate automation repository or metadata-read token is
-required. Pi workflows are manual `workflow_dispatch` jobs restricted to main;
+required. Pi workflows are restricted to main. Diagnostics also retain the existing
+owner-added push triggers for `.nexarm/camera-trigger.txt` and
+`.nexarm/ros-trigger.txt`; ordinary source pushes do not target the Pi.
 PR/fork CI runs on GitHub-hosted runners. Keep workflow writers trusted, protect
 main, and restrict the `pi-diagnostics` and `pi-readonly` environments to main.
 A public self-hosted runner is not a sandbox for untrusted code: repository writers
@@ -74,6 +76,23 @@ only intended ROS interactions. They do not publish actuator messages or invoke
 robot services. The observer uses the container's configured ROS_DOMAIN_ID/default,
 not a hardware/domain reconfiguration.
 
+`ros-inspect` now includes `camera`: the fixed topic, publisher count and each
+publisher's node/type and offered reliability, durability, history, depth,
+deadline, lifespan and liveliness. Counts/endpoints are a discovery snapshot and
+may change as publishers join/leave. The requested reader QoS is explicit
+**BEST_EFFORT / VOLATILE / KEEP_LAST depth 5**, compatible with live frames from
+best-effort or reliable and volatile or transient-local writers. Successful
+`camera.json` includes the same endpoint/QoS report. The previous observer already
+used ROS sensor-data QoS; this change makes it explicit and adds evidence rather
+than claiming QoS caused the live timeout. If capture still times out, run
+`ros-inspect` and review publisher count/QoS; a visible topic alone does not prove
+an active publisher or flowing camera frames. No publisher or driver is launched.
+
+Rerun the newly downloaded standalone activation script as pi while the runner is
+idle to install this root-owned observer update. The upgrade recognizes the
+previous observer's exact bytes, preserves its backup and is safely repeatable;
+custom helper files still fail closed. No runner re-registration is required.
+
 The camera waits at most 15 seconds, accepts only 640×400 rgb8/bgr8 with bounded
 stride, and converts one frame to RGB. No compressed/depth topic or continuous
 stream capture is offered. The observer has a 22-second OS alarm, 15 CPU-second
@@ -100,7 +119,9 @@ Pi is not yet verified; review actual graph/domain results before expecting imag
 Local tests cover enrollment failure before Docker access, fixed non-root exec argv,
 strict output validation, old/new broker upgrade recognition and workflow gates.
 A disposable native x86-64 Humble container demonstrates ROS graph inspection,
-synthetic 640×400 image capture as UID 65534, and missing-publisher timeout. Hosted
+synthetic 640×400 image capture as UID 65534 across BEST_EFFORT/RELIABLE and
+VOLATILE/TRANSIENT_LOCAL writers, publisher-count/offered-QoS reporting, and
+missing-publisher timeout. Hosted
 CI repeats that integration test; ordinary tests/builds never select the Pi runner.
 These are distinct from ARM64/live Aurora tests, which remain unrun. No command in
 this implementation session connected to, upgraded or operated the real Pi.
