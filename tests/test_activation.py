@@ -138,3 +138,55 @@ class ActivationTests(unittest.TestCase):
             subprocess.run(['tar','-xzf',str(path),'-C',str(root)],check=True,capture_output=True)
             self.assertEqual((root/'node/bin/npm').resolve(),root/'node/lib/npm.js')
             self.assertEqual((root/'hard').stat().st_ino,(root/'node/lib/npm.js').stat().st_ino)
+
+    def residue(self, directory):
+        root=Path(directory)/'actions-runner';root.mkdir()
+        (root/'config.sh').write_bytes(b'official package')
+        (root/'.env').write_text('LANG=C\n')
+        (root/'.path').write_text('/usr/bin\n')
+        (root/'_diag').mkdir();(root/'_diag/Runner.log').write_text('failed registration')
+        import hashlib
+        manifest={'config.sh':('file',hashlib.sha256(b'official package').hexdigest())}
+        proc=Path(directory)/'proc';proc.mkdir()
+        def mapped(path):
+            if str(path)=='/var/lib/nexarm-runner/actions-runner': return root
+            if str(path)=='/proc': return proc
+            return Path(path)
+        return root,manifest,mapped
+
+    def test_exact_unconfigured_residue_removed_only(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            root,manifest,mapped=self.residue(directory)
+            neighbor=Path(directory)/'protected-host-file';neighbor.write_text('preserve')
+            with patch.object(activation,'Path',side_effect=mapped):
+                activation.recover_unconfigured_runner(manifest)
+            self.assertFalse(root.exists())
+            self.assertEqual(neighbor.read_text(),'preserve')
+
+    def test_configured_credentials_unknown_or_modified_residue_preserved(self):
+        from unittest.mock import patch
+        for marker in ['.runner','.credentials','.credentials_rsaparams','.service','_work','unknown.txt','modified']:
+            with self.subTest(marker=marker),tempfile.TemporaryDirectory() as directory:
+                root,manifest,mapped=self.residue(directory)
+                if marker=='modified': (root/'config.sh').write_text('changed')
+                else: (root/marker).write_text('keep')
+                with patch.object(activation,'Path',side_effect=mapped):
+                    with self.assertRaises(ValueError): activation.recover_unconfigured_runner(manifest)
+                self.assertTrue(root.exists())
+                self.assertTrue((root/'config.sh').exists())
+
+    def test_residue_symlink_refused(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            root,manifest,mapped=self.residue(directory)
+            (root/'_diag/escape').symlink_to('/tmp')
+            with patch.object(activation,'Path',side_effect=mapped):
+                with self.assertRaises(ValueError): activation.recover_unconfigured_runner(manifest)
+            self.assertTrue(root.exists())
+
+    def test_active_service_prevents_cleanup(self):
+        from unittest.mock import patch
+        with patch.object(activation.subprocess,'check_output',return_value='active\n'),patch.object(activation,'run') as run:
+            with self.assertRaises(ValueError): activation.recover_runner_residue(Path('/tmp/archive'),'/var/lib/nexarm-runner/actions-runner')
+            run.assert_not_called()

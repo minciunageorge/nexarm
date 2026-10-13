@@ -125,3 +125,22 @@ before creation of the runner extraction directory, so this retry can proceed
 from your completed host stage. If a separate later attempt created an
 unconfigured partial runner directory, the script still stops for explicit
 inspection rather than overwriting it. No robot container change is required.
+
+
+## Retry after registration left an unconfigured extraction
+
+The updated script recognizes the extracted official package plus exactly the
+registration side-effect locations `.env`, `.path` and `_diag`. Before cleanup
+it requires an inactive/failed service, no other runner-account process, unchanged
+package hashes/link targets matching the freshly SHA256-verified release, safe
+ownership, no mount points, and no configured/credential markers. Any `.runner*`,
+`.credentials*` or `.service` marker protects the directory regardless of contents
+or file type. Unknown or modified files are preserved for manual review. If the
+latest release differs from the extracted version, comparison also fails closed.
+
+Only `/var/lib/nexarm-runner/actions-runner` is removed, using symlink-resistant
+removal as the dedicated non-root account. It is then recreated and freshly
+extracted before requesting a new registration token. The host broker, account,
+allowlist, preservation guard and Docker container are never replaced or removed.
+The earlier blanket refusal of all unconfigured directories is superseded only
+for this verified failed-registration residue. Configured runners remain protected.

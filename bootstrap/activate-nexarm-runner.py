@@ -153,6 +153,124 @@ def ensure_host_setup(stage, container_id):
     print('Resuming: protected host setup already complete; no files/account/guard overwritten.')
 
 
+def runner_manifest(archive_path):
+    """Expected extracted tree from the freshly checksum-verified official tar."""
+    manifest = {}
+    with tarfile.open(archive_path) as archive:
+        for member in archive:
+            name = str(PurePosixPath(member.name))
+            if name == '.':
+                continue
+            if member.isfile() or member.islnk():
+                with archive.extractfile(member) as contents:
+                    digest = hashlib.sha256()
+                    while chunk := contents.read(1024 * 1024):
+                        digest.update(chunk)
+                manifest[name] = ('file', digest.hexdigest())
+            elif member.issym():
+                manifest[name] = ('link', member.linkname)
+            else:
+                manifest[name] = ('dir', None)
+            for parent in PurePosixPath(name).parents:
+                if str(parent) != '.':
+                    manifest.setdefault(str(parent), ('dir', None))
+    return manifest
+
+
+def recover_unconfigured_runner(manifest, runner_path='/var/lib/nexarm-runner/actions-runner'):
+    """Non-root cleanup of an exact verified package plus failed-config residue."""
+    import stat
+    root = Path(runner_path)
+    if root != Path('/var/lib/nexarm-runner/actions-runner'):
+        raise ValueError('Recovery is restricted to the fixed runner extraction directory')
+    if root.is_symlink() or root.resolve() != root or not root.is_dir() or os.path.ismount(root):
+        raise ValueError('Unsafe runner directory; nothing removed')
+    uid = os.geteuid()
+    if uid == 0 or root.stat().st_uid != uid:
+        raise ValueError('Recovery must run as the dedicated runner directory owner')
+    # A configured runner is protected regardless of marker contents/type.
+    def protected():
+        return any(p.name.startswith(('.runner', '.credentials')) or p.name == '.service'
+                   for p in root.iterdir())
+    if protected():
+        raise ValueError('Configured/credentialed runner found; nothing removed')
+    if not {'.env', '.path', '_diag'} <= {p.name for p in root.iterdir()}:
+        raise ValueError('Not the recognized failed-registration residue; nothing removed')
+    # Detect bind mounts too: os.path.ismount alone misses same-filesystem binds.
+    for line in Path('/proc/self/mountinfo').read_text().splitlines():
+        mount = re.sub(r'\\([0-7]{3})', lambda match: chr(int(match.group(1), 8)), line.split()[4])
+        if mount == str(root) or mount.startswith(str(root) + '/'):
+            raise ValueError('Runner extraction contains a mount; nothing removed')
+    # Service status is checked by the caller; refuse any other runner-user process
+    # too, including an unfinished config.sh or independently started listener.
+    for process in Path('/proc').iterdir():
+        if process.name.isdigit() and int(process.name) != os.getpid():
+            try:
+                if process.stat().st_uid == uid:
+                    raise ValueError('Runner account has another process; nothing removed')
+            except FileNotFoundError:
+                pass
+    allowed = {'.env', '.path', '_diag'}
+    for item in root.rglob('*'):
+        relative = item.relative_to(root).as_posix()
+        info = item.lstat()
+        if info.st_uid != uid or os.path.ismount(item):
+            raise ValueError('Unexpected ownership/mount in runner residue')
+        expected = manifest.get(relative)
+        if expected:
+            kind, value = expected
+            if kind == 'link':
+                if not stat.S_ISLNK(info.st_mode) or os.readlink(item) != value:
+                    raise ValueError('Runner package link differs; nothing removed')
+            elif kind == 'dir':
+                if not stat.S_ISDIR(info.st_mode):
+                    raise ValueError('Runner package directory differs; nothing removed')
+            else:
+                if not stat.S_ISREG(info.st_mode):
+                    raise ValueError('Runner package file differs; nothing removed')
+                digest = hashlib.sha256()
+                with item.open('rb') as contents:
+                    while chunk := contents.read(1024 * 1024):
+                        digest.update(chunk)
+                if digest.hexdigest() != value:
+                    raise ValueError('Runner package contents differ; nothing removed')
+        elif relative in allowed:
+            if not (stat.S_ISDIR(info.st_mode) if relative == '_diag' else stat.S_ISREG(info.st_mode)):
+                raise ValueError('Unsafe failed-registration residue')
+        elif relative.startswith('_diag/'):
+            if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
+                raise ValueError('Unsafe diagnostic residue')
+        else:
+            raise ValueError('Unknown runner-directory contents; nothing removed')
+    for relative in manifest:
+        if not os.path.lexists(root / relative):
+            raise ValueError('Runner package is incomplete; nothing removed')
+    if not shutil.rmtree.avoids_symlink_attacks:
+        raise ValueError('Platform lacks safe directory removal; nothing removed')
+    parent_fd = os.open(root.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        if protected():
+            raise ValueError('Registration appeared during inspection; nothing removed')
+        shutil.rmtree(root.name, dir_fd=parent_fd)
+    finally:
+        os.close(parent_fd)
+    print('Removed only verified unconfigured runner extraction and failed-registration residue.')
+
+
+def recover_runner_residue(archive, runner):
+    """Pass only public package hashes to cleanup running as nexarm-runner."""
+    import inspect
+    state = subprocess.check_output(['systemctl', 'show', '--property=ActiveState', '--value', 'nexarm-actions.service'], text=True).strip()
+    if state not in ('inactive', 'failed'):
+        raise ValueError('Runner service is not stopped; residue preserved')
+    manifest = runner_manifest(archive)
+    # The helper cannot access the pi-owned staging directory. Supply code plus
+    # hashes over stdin, not root privileges or a mutable installed host helper.
+    code = 'import os, json, hashlib, shutil, re\nfrom pathlib import Path\n' + inspect.getsource(recover_unconfigured_runner)
+    code += '\nrecover_unconfigured_runner(' + repr(manifest) + ')\n'
+    run(['sudo', '-H', '-u', 'nexarm-runner', '/usr/bin/python3', '-I', '-'], input=code, text=True)
+
+
 def run(command, **kwargs):
     return subprocess.run(command, check=True, **kwargs)
 
@@ -202,9 +320,8 @@ def main():
                 if sha.hexdigest() != digest:
                     raise SystemExit('SHA256 mismatch: runner will not be extracted or used')
                 verify_archive(archive)
-                # Never overwrite an existing partial runner directory silently.
                 if subprocess.run(['sudo', 'test', '-e', runner]).returncode == 0:
-                    raise SystemExit('Unconfigured runner directory exists; inspect it before retrying')
+                    recover_runner_residue(archive, runner)
                 run(['sudo', 'install', '-d', '-o', 'nexarm-runner', '-g', 'nexarm-runner', '-m', '700', runner])
                 # Runner package is extracted as its own user, never as root.
                 run(['sudo', 'install', '-o', 'nexarm-runner', '-g', 'nexarm-runner', '-m', '600', str(archive), runner+'/package.tar.gz'])
