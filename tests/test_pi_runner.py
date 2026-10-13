@@ -73,6 +73,7 @@ class BrokerTests(unittest.TestCase):
         unit = unit.replace('/var/lib/nexarm-runner/actions-runner/run.sh', '/usr/bin/true')
         unit = unit.replace('/var/lib/nexarm-runner/actions-runner', '/tmp')
         unit = unit.replace('ReadWritePaths=/var/lib/nexarm-runner', 'ReadWritePaths=/tmp')
+        unit = unit.replace('/usr/bin/sudo', '/usr/bin/true')  # executable absent here; parse only
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'nexarm-actions.service'
             path.write_text(unit)

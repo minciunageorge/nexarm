@@ -22,9 +22,20 @@ def main():
     information = {'hostname':socket.gethostname(), 'os':platform.system(),
                    'kernel':platform.release(), 'architecture':platform.machine(),
                    'cpu_count':os.cpu_count(), 'uid':os.getuid(), 'groups':os.getgroups()}
+    status = Path('/proc/self/status').read_text()
+    flag = next(line for line in status.splitlines() if line.startswith('NoNewPrivs:'))
+    information['no_new_privileges'] = int(flag.split()[1])
+    if information['no_new_privileges'] != 0:
+        raise SystemExit('Runner inherited NoNewPrivs=1; upgrade its systemd unit before using the approved broker')
     (output/'system.json').write_text(json.dumps(information,indent=2)+'\n')
     if information['architecture'] != 'aarch64':
         raise SystemExit('Expected native ARM64 runner')
+    # Policy-list mode checks access WITHOUT executing these unapproved commands.
+    for command in ['/usr/bin/id', '/bin/sh', '/usr/bin/docker']:
+        check = subprocess.run(['/usr/bin/sudo', '-n', '-l', command],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        if check.returncode == 0:
+            raise SystemExit('Runner has unexpected sudo authorization outside the broker')
     # Connect only; no Docker API request, no robot access or motion command.
     with socket.socket(socket.AF_UNIX) as connection:
         try:
@@ -47,7 +58,7 @@ def main():
     broker('probe',output/'container-after.txt')
     if (output/'container-before.txt').read_bytes() != (output/'container-after.txt').read_bytes():
         raise SystemExit('Container diagnostic state changed during verification')
-    result={'docker_diagnostics':'passed', 'direct_docker_access':'denied',
+    result={'docker_diagnostics':'passed', 'direct_docker_access':'denied', 'general_sudo_policy_checks':'denied',
             'container_state_comparison':'unchanged', 'approved_result_paths':paths,
             'ros_camera_file_checks':'passed for enrolled paths' if paths else 'not run: no paths approved yet',
             'deployment':'disabled', 'motion':'not executed'}

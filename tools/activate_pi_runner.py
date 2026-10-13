@@ -123,16 +123,97 @@ def verify_archive(path):
                 raise ValueError('Archive hardlink must resolve to a regular file')
 
 
+def assert_runner_idle():
+    worker = subprocess.run(['pgrep', '-u', 'nexarm-runner', '-f', 'Runner[.]Worker'])
+    if worker.returncode != 1:
+        raise ValueError('Runner job is active or cannot be checked; retry when idle')
+
+
+def runner_has_no_new_privileges():
+    pid = int(subprocess.check_output(['systemctl', 'show', '--property=MainPID', '--value', 'nexarm-actions.service'], text=True).strip())
+    if pid <= 0:
+        raise ValueError('Running service has no main PID; retry after inspecting its status')
+    status = Path(f'/proc/{pid}/status').read_text()
+    flag = next(line for line in status.splitlines() if line.startswith('NoNewPrivs:'))
+    return flag.split()[1] != '0'
+
+
+def refresh_running_runner(unit_changed):
+    """Apply an idle service upgrade; retry a previously deferred restart."""
+    if not unit_changed and not runner_has_no_new_privileges():
+        return False
+    assert_runner_idle()
+    run(['sudo', 'systemctl', 'daemon-reload'])
+    run(['sudo', 'systemctl', 'restart', 'nexarm-actions.service'])
+    if runner_has_no_new_privileges():
+        raise ValueError('Live runner still has NoNewPrivs=1; inspect service overrides')
+    print('Restarted only the idle runner service; live NoNewPrivs=0 confirmed.')
+    return True
+
+
+LEGACY_RUNNER_UNIT_SHA256 = "6b4ad04a5bf4a75bb6da45377c847518d22006a734751c1fc4d27b58002741a2"
+
+
+def upgrade_runner_unit(source):
+    """Replace only the known historical unit; preserve sudoers/broker/config."""
+    unit = '/etc/systemd/system/nexarm-actions.service'
+    if subprocess.run(['sudo', 'test', '-L', unit]).returncode == 0:
+        raise ValueError('Runner unit is a symlink; preserving it')
+    owner, mode = subprocess.check_output(['sudo', 'stat', '-c', '%u %a', unit], text=True).split()
+    if owner != '0' or int(mode, 8) & 0o022:
+        raise ValueError('Unsafe runner unit ownership/permissions; preserving it')
+    existing = subprocess.check_output(['sudo', 'cat', unit])
+    dropins = subprocess.check_output(['systemctl', 'show', '--property=DropInPaths', '--value', 'nexarm-actions.service'], text=True).strip()
+    if dropins:
+        raise ValueError('Runner service has local overrides; preserve and review them first')
+    if existing == source.read_bytes():
+        return False
+    if hashlib.sha256(existing).hexdigest() != LEGACY_RUNNER_UNIT_SHA256:
+        raise ValueError('Unknown/custom runner unit; preserving it for review')
+    assert_runner_idle()
+    run(['sudo', 'systemd-analyze', 'verify', str(source)])
+    # Fixed destinations, atomic replacement, one protected backup, no arbitrary
+    # files or root-command authorization granted to nexarm-runner.
+    code = r'''import hashlib, os, pathlib, tempfile, sys
+unit = pathlib.Path("/etc/systemd/system/nexarm-actions.service")
+legacy = sys.argv[2]
+current = unit.read_bytes()
+if unit.is_symlink() or unit.stat().st_uid != 0 or unit.stat().st_mode & 0o022:
+    raise SystemExit("Unsafe installed runner unit; preserved")
+if hashlib.sha256(current).hexdigest() != legacy:
+    raise SystemExit("Unit changed during upgrade; preserved")
+backup = unit.with_name(unit.name + ".nexarm-v1.bak")
+if os.path.lexists(backup):
+    if backup.is_symlink() or backup.stat().st_uid != 0 or backup.stat().st_mode & 0o022 or backup.read_bytes() != current:
+        raise SystemExit("Existing backup differs; preserved")
+else:
+    fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "wb") as output: output.write(current)
+new = pathlib.Path(sys.argv[1]).read_bytes()
+fd, temporary = tempfile.mkstemp(prefix=".nexarm-unit-", dir=unit.parent)
+try:
+    with os.fdopen(fd, "wb") as output:
+        output.write(new); output.flush(); os.fsync(output.fileno())
+    os.chmod(temporary, 0o644)
+    if unit.read_bytes() != current: raise SystemExit("Unit changed; preserved")
+    os.replace(temporary, unit)
+finally:
+    if os.path.exists(temporary): os.unlink(temporary)
+'''
+    run(['sudo', '/usr/bin/python3', '-I', '-c', code, str(source), LEGACY_RUNNER_UNIT_SHA256])
+    print('Upgraded only the recognized runner unit; old unit backed up. Broker/sudoers/guard unchanged.')
+    return True
+
+
 def ensure_host_setup(stage, container_id):
     """Reuse identical protected host setup, never reinstall or overwrite it."""
     installed = subprocess.run(['sudo', 'test', '-e', '/usr/local/sbin/nexarm-readonly']).returncode == 0
     if not installed:
         run(['sudo', 'bash', str(stage / 'deploy/install-pi-runner-host.sh')])
-        return
+        return False
     destinations = {'deploy/runner/readonly.py': '/usr/local/lib/nexarm-runner/readonly.py',
                     'deploy/runner/nexarm-readonly': '/usr/local/sbin/nexarm-readonly',
-                    'deploy/runner/readonly.sudoers': '/etc/sudoers.d/nexarm-readonly',
-                    'deploy/runner/nexarm-actions.service': '/etc/systemd/system/nexarm-actions.service'}
+                    'deploy/runner/readonly.sudoers': '/etc/sudoers.d/nexarm-readonly'}
     for source, target in destinations.items():
         if subprocess.run(['sudo', 'test', '-L', target]).returncode == 0:
             raise ValueError('Installed host file is a symlink; review required')
@@ -150,7 +231,9 @@ def ensure_host_setup(stage, container_id):
         raise ValueError('Preservation guard differs from live container; review required')
     # Installed broker also validates its root-owned config and enrolled identity.
     run(['sudo', '-H', '-u', 'nexarm-runner', '/usr/bin/sudo', '-n', '/usr/local/sbin/nexarm-readonly', 'probe'])
-    print('Resuming: protected host setup already complete; no files/account/guard overwritten.')
+    changed = upgrade_runner_unit(stage / 'deploy/runner/nexarm-actions.service')
+    print('Resuming: protected broker/account/guard preserved.')
+    return changed
 
 
 def runner_manifest(archive_path):
@@ -280,7 +363,7 @@ def main():
         raise SystemExit('Run as pi (not sudo) on 64-bit Raspberry Pi Linux')
     if os.environ.get('HOME') != '/home/pi':
         raise SystemExit('Expected HOME=/home/pi')
-    for command in ['sudo', 'docker', 'systemctl', 'systemd-analyze', 'visudo', 'useradd', 'tar']:
+    for command in ['sudo', 'docker', 'systemctl', 'systemd-analyze', 'visudo', 'useradd', 'tar', 'pgrep']:
         if shutil.which(command, path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin") is None:
             raise SystemExit(f'Missing prerequisite: {command}; nothing installed automatically')
     run(['sudo', '-v'])
@@ -299,10 +382,11 @@ def main():
             target = stage / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(contents)
-        ensure_host_setup(stage, baseline.split()[0])
+        unit_changed = ensure_host_setup(stage, baseline.split()[0])
         result = subprocess.run(['systemctl', 'is-active', '--quiet', 'nexarm-actions.service'])
         if result.returncode == 0:
-            print('Runner service already active; no restart or re-registration performed.')
+            if not refresh_running_runner(unit_changed):
+                print('Runner service already active; no restart or re-registration performed.')
         else:
             runner = '/var/lib/nexarm-runner/actions-runner'
             configured = subprocess.run(['sudo', 'test', '-f', runner+'/.runner']).returncode == 0

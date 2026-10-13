@@ -19,8 +19,9 @@ Report ARM64, Pi connectivity and hardware checks as untested unless executed.
 
 The preferred transport is now a dedicated ARM64 self-hosted GitHub runner on the
 Pi with NO Docker/sudo-group membership, plus a root-owned read-only broker; see
-docs/pi-self-hosted-runner.md. The VPS relay is an inactive alternative. No Pi
-runner, broker or service has been installed/activated. Existing nexarm must stay
+docs/pi-self-hosted-runner.md. The VPS relay is an inactive alternative. The user has activated the Pi runner and reported a live verification failure;
+cloud code must not modify the Pi. The service upgrade is prepared for the user
+to apply as pi while idle. Existing nexarm must stay
 unchanged. Routine jobs permit only probe/discovery/collection; deployment,
 container exec, new camera capture and motion remain disabled. Do not register a
 robot-hosted runner to a public/untrusted repository. Verify Actions API binding

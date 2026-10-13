@@ -144,3 +144,36 @@ extracted before requesting a new registration token. The host broker, account,
 allowlist, preservation guard and Docker container are never replaced or removed.
 The earlier blanket refusal of all unconfigured directories is superseded only
 for this verified failed-registration residue. Configured runners remain protected.
+
+
+## Upgrade the sudo-compatible runner service
+
+On systemd 252/254, the old unit's `PrivateDevices`, kernel/seccomp restrictions,
+`RestrictSUIDSGID` and `RestrictAddressFamilies` implicitly force NoNewPrivs=1 even
+though NoNewPrivileges=no is written. This prevents the three existing approved
+sudo broker operations. The fix removes those forcing settings and uses
+DevicePolicy=closed, filesystem/home isolation and existing resource bounds.
+Neither sudoers nor the broker is broadened; nexarm-runner still has no general
+sudo, Docker or robot-device group membership. No capabilities are granted.
+
+As **pi**, download the updated standalone bootstrap and run it again when no
+Actions job is running. For a configured runner, no registration or extraction
+cleanup occurs. It recognizes only the exact historical service unit, verifies
+root ownership, refuses local drop-ins/custom units, backs up the old unit to
+`/etc/systemd/system/nexarm-actions.service.nexarm-v1.bak`, and atomically replaces
+only that unit. It reloads systemd and restarts only the idle runner service.
+Broker, sudoers, allowlist, account, guard and nexarm stay unchanged. A job that
+appears before restart defers the operation; retry safely when idle. It does not
+stop jobs or reset unknown service overrides to force success.
+
+The new service checks the live NoNewPrivs kernel flag and runs only the approved
+read-only broker probe in ExecStartPre. If either fails, the runner will not accept
+jobs; inspect its journal without relaxing policy. A retry of an already updated
+unit also detects an old live process with NoNewPrivs=1 and applies the pending
+idle restart. After applying, rerun Pi harmless verification. Its own process
+checks NoNewPrivs=0, verifies no direct Docker access, and checks unapproved sudo
+commands in **policy-list mode**, without executing them.
+
+This fix has been prepared/tested in the cloud, not applied to the Pi. Service
+parser tests substitute missing sudo/runner executables locally; actual startup
+and broker/PAM behavior are validated by the Pi-side ExecStartPre and next job.

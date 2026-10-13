@@ -8,6 +8,9 @@ StartLimitIntervalSec=0
 User=nexarm-runner
 Group=nexarm-runner
 WorkingDirectory=/var/lib/nexarm-runner/actions-runner
+# Test the kernel flag and the exact read-only sudo path INSIDE this sandbox.
+ExecStartPre=/usr/bin/python3 -I -c 'import pathlib; flag = next(line for line in pathlib.Path("/proc/self/status").read_text().splitlines() if line.startswith("NoNewPrivs:")); assert flag.split()[1] == "0", "Service sandbox forbids approved read-only sudo"'
+ExecStartPre=/usr/bin/sudo -n /usr/local/sbin/nexarm-readonly probe
 ExecStart=/var/lib/nexarm-runner/actions-runner/run.sh
 Restart=always
 RestartSec=15
@@ -19,13 +22,12 @@ ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/var/lib/nexarm-runner
 PrivateTmp=yes
-PrivateDevices=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
 ProtectControlGroups=yes
-RestrictSUIDSGID=yes
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-# sudo to the fixed read-only broker must remain possible; see the security guide.
+# Seccomp-based hardening can implicitly force NNP on systemd 252/254.
+# Do not re-add it here or grant capabilities to bypass it. Cgroup device access
+# and filesystem isolation remain restricted without disabling setuid sudo.
+DevicePolicy=closed
+# sudoers still permits ONLY the three fixed read-only broker commands.
 NoNewPrivileges=no
 TasksMax=128
 MemoryMax=512M

@@ -104,7 +104,8 @@ class ActivationTests(unittest.TestCase):
         with patch.object(activation.subprocess,'run',side_effect=completed), \
              patch.object(activation.subprocess,'check_output',side_effect=check_output), \
              patch.object(activation,'run') as run, \
-             patch.object(activation,'Path',return_value=guard):
+             patch.object(activation,'Path',return_value=guard), \
+             patch.object(activation,'upgrade_runner_unit',return_value=False):
             activation.ensure_host_setup(Path('/tmp/stage'),'a'*64)
             self.assertEqual(run.call_count,1)
             self.assertEqual(run.call_args.args[0][-1],'probe')
@@ -189,4 +190,54 @@ class ActivationTests(unittest.TestCase):
         from unittest.mock import patch
         with patch.object(activation.subprocess,'check_output',return_value='active\n'),patch.object(activation,'run') as run:
             with self.assertRaises(ValueError): activation.recover_runner_residue(Path('/tmp/archive'),'/var/lib/nexarm-runner/actions-runner')
+            run.assert_not_called()
+
+    def upgrade_mocks(self, old, workers=False, overrides=''):
+        import subprocess
+        def command(args):
+            if args[0]=='pgrep': return subprocess.CompletedProcess(args,0 if workers else 1)
+            return subprocess.CompletedProcess(args,1 if '-L' in args else 0)
+        def output(args,**kwargs):
+            if args[1]=='stat': return '0 644\n'
+            if args[1]=='cat': return old
+            return overrides
+        return command,output
+
+    def test_known_legacy_unit_only_is_upgraded(self):
+        from unittest.mock import patch
+        import hashlib
+        old=(ROOT/'tests/fixtures/nexarm-actions-v1.service').read_bytes()
+        self.assertEqual(hashlib.sha256(old).hexdigest(),activation.LEGACY_RUNNER_UNIT_SHA256)
+        command,output=self.upgrade_mocks(old)
+        with patch.object(activation.subprocess,'run',side_effect=command),patch.object(activation.subprocess,'check_output',side_effect=output),patch.object(activation,'run') as run:
+            self.assertTrue(activation.upgrade_runner_unit(ROOT/'deploy/runner/nexarm-actions.service'))
+            self.assertEqual(run.call_count,2)
+            self.assertEqual(run.call_args.args[0][:3],['sudo','/usr/bin/python3','-I'])
+
+    def test_custom_unit_busy_job_and_overrides_are_preserved(self):
+        from unittest.mock import patch
+        old=(ROOT/'tests/fixtures/nexarm-actions-v1.service').read_bytes()
+        for contents,busy,overrides in [(b'custom',False,''),(old,True,''),(old,False,'local.conf')]:
+            with self.subTest(busy=busy,overrides=overrides):
+                command,output=self.upgrade_mocks(contents,busy,overrides)
+                with patch.object(activation.subprocess,'run',side_effect=command),patch.object(activation.subprocess,'check_output',side_effect=output),patch.object(activation,'run') as run:
+                    with self.assertRaises(ValueError): activation.upgrade_runner_unit(ROOT/'deploy/runner/nexarm-actions.service')
+                    run.assert_not_called()
+
+    def test_already_upgraded_unit_is_not_rewritten(self):
+        from unittest.mock import patch
+        source=ROOT/'deploy/runner/nexarm-actions.service'
+        command,output=self.upgrade_mocks(source.read_bytes())
+        with patch.object(activation.subprocess,'run',side_effect=command),patch.object(activation.subprocess,'check_output',side_effect=output),patch.object(activation,'run') as run:
+            self.assertFalse(activation.upgrade_runner_unit(source))
+            run.assert_not_called()
+
+    def test_deferred_upgrade_restarts_only_idle_runner(self):
+        from unittest.mock import patch
+        with patch.object(activation,'runner_has_no_new_privileges',side_effect=[True,False]),patch.object(activation,'assert_runner_idle') as idle,patch.object(activation,'run') as run:
+            self.assertTrue(activation.refresh_running_runner(False))
+            idle.assert_called_once()
+            self.assertEqual(run.call_args.args[0],['sudo','systemctl','restart','nexarm-actions.service'])
+        with patch.object(activation,'runner_has_no_new_privileges',return_value=True),patch.object(activation,'assert_runner_idle',side_effect=ValueError('busy')),patch.object(activation,'run') as run:
+            with self.assertRaises(ValueError): activation.refresh_running_runner(False)
             run.assert_not_called()

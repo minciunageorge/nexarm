@@ -55,10 +55,13 @@ post-copy check, so watch free disk space during copying. No camera node is
 started. New captures, ROS commands, deployment, motion and application launch
 remain disabled. The previous protection marker is preserved as well.
 
-The systemd unit isolates pi's home, device nodes and host write paths, limits
+The systemd unit isolates pi's home and host write paths, restricts device access
+with DevicePolicy=closed, and limits
 runner CPU to half a core and RAM to 512 MiB, restarts after network/process loss,
 and starts at boot. `NoNewPrivileges=no` is intentional because the exact
-read-only sudo helper must elevate; setting it to yes would break collection.
+read-only sudo helper must elevate; setting it to yes would break collection. Seccomp-based restrictions that
+implicitly force NoNewPrivileges on systemd 252/254 are deliberately excluded;
+the service checks the live flag and broker during startup.
 Root-owned code is outside the runner workspace and never imports checkout code.
 A runner job can still execute code as its own account, access networks and modify
 its own persistent work directory. These restrictions **do not isolate ROS/DDS
