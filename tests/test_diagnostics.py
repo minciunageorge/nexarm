@@ -12,20 +12,21 @@ ROOT=Path(__file__).resolve().parents[1]
 def load(name):
  spec=importlib.util.spec_from_file_location(name,ROOT/'deploy/runner'/f'{name}.py')
  module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
-broker=load('readonly');gate=load('repository_gate')
+broker=load('readonly')
 
 class DiagnosticsTests(unittest.TestCase):
- def test_public_metadata_and_wrong_repository_fail(self):
-  for metadata in [{'private':False,'full_name':'owner/repo'},{'private':True,'full_name':'other/repo'}]:
-   response=MagicMock();response.__enter__.return_value=io.StringIO(json.dumps(metadata))
-   with patch.object(gate.urllib.request,'urlopen',return_value=response):
-    with self.assertRaises(ValueError):gate.repository_metadata('owner/repo','synthetic-token')
-
- def test_unenrolled_or_public_gate_prevents_any_docker_call(self):
-  with patch.object(broker,'private_gate',side_effect=ValueError('private gate')),patch.object(broker,'docker') as docker:
+ def test_unenrolled_diagnostics_prevent_any_docker_call(self):
+  with patch.object(broker,'docker') as docker:
    for operation in ['ros-inspect','camera-one-frame']:
-    with self.assertRaises(ValueError):broker.execute(operation,{'container_id':'a'*64})
+    for enabled in [None,False,'true']:
+     with self.assertRaises(ValueError):broker.execute(operation,{'container_id':'a'*64,'diagnostics_enabled':enabled})
    docker.assert_not_called()
+
+ def test_enrolled_diagnostics_do_not_require_visibility_or_token(self):
+  with patch.object(broker,'docker',return_value=b'a'*64),patch.object(broker,'observe') as observe:
+   for operation in ['ros-inspect','camera-one-frame']:
+    broker.execute(operation,{'container_id':'a'*64,'diagnostics_enabled':True})
+   self.assertEqual(observe.call_count,2)
 
  def test_camera_exec_is_fixed_nonroot_and_output_is_validated(self):
   pixels=b'\x01\x02\x03'*(640*400)
@@ -51,17 +52,18 @@ class DiagnosticsTests(unittest.TestCase):
    with self.assertRaises(ValueError):broker.observe('camera-one-frame','a'*64)
    output.buffer.write.assert_not_called()
 
- def test_existing_public_workflows_cannot_allocate_pi(self):
+ def test_public_workflows_remain_manual_main_only(self):
   for name in ['pi-readonly.yml','pi-verify.yml','pi-diagnostics.yml']:
    workflow=(ROOT/'.github/workflows'/name).read_text()
-   self.assertIn("if: github.event.repository.private == true && github.ref == 'refs/heads/main'",workflow)
+   self.assertIn("if: github.ref == 'refs/heads/main'",workflow)
    self.assertNotIn('pull_request',workflow)
+   self.assertIn('workflow_dispatch',workflow)
+   self.assertNotIn('repository.private',workflow)
 
- def test_privacy_is_required_even_for_old_broker_operations(self):
-  with patch.object(broker,'private_gate',side_effect=ValueError('private gate')),patch.object(broker,'docker') as docker:
-   for operation in ['probe','discover-existing','collect-existing']:
-    with self.assertRaises(ValueError):broker.execute(operation,{'container_id':'a'*64})
-   docker.assert_not_called()
+ def test_probe_without_diagnostics_enrollment_uses_fixed_docker_read(self):
+  with patch.object(broker,'docker',return_value=b'a'*64) as docker,patch.object(broker.sys,'stdout'):
+   broker.execute('probe',{'container_id':'a'*64})
+   self.assertEqual(docker.call_count,2)
 
  def test_broker_upgrade_recognizes_only_legacy_or_desired_files(self):
   upgrade=load('upgrade_diagnostics')
@@ -72,15 +74,45 @@ class DiagnosticsTests(unittest.TestCase):
    upgrade.require_known_file(name,desired,desired)
    with self.assertRaises(ValueError):upgrade.require_known_file(name,b'custom policy',desired)
 
- def test_public_repository_upgrade_never_writes(self):
-  import sys,types
+ def test_upgrade_accepts_previously_gated_broker(self):
   upgrade=load('upgrade_diagnostics')
-  fake=types.ModuleType('repository_gate');fake.repository_metadata=MagicMock(side_effect=ValueError('public'))
-  with patch.object(upgrade.os,'geteuid',return_value=0),patch.object(upgrade.sys,'argv',['upgrade','/tmp/stage']),patch.object(upgrade.sys,'stdin',io.StringIO(json.dumps({'repository':'owner/repo','token':'synthetic'}))),patch.dict(sys.modules,{'repository_gate':fake}),patch.object(upgrade,'atomic') as atomic:
-   with self.assertRaises(ValueError):upgrade.main()
-   atomic.assert_not_called()
+  upgrade.require_known_file('readonly.py',(ROOT/'tests/fixtures/diagnostics-gated-readonly.py').read_bytes(),(ROOT/'deploy/runner/readonly.py').read_bytes())
 
- def test_healthy_private_metadata_is_accepted(self):
-  response=MagicMock();response.__enter__.return_value=io.StringIO(json.dumps({'private':True,'full_name':'owner/repo'}))
-  with patch.object(gate.urllib.request,'urlopen',return_value=response):
-   self.assertTrue(gate.repository_metadata('owner/repo','synthetic')['private'])
+ def test_activation_requires_no_privacy_credential(self):
+  for name in ['tools/activate_pi_runner.py','deploy/runner/upgrade_diagnostics.py','deploy/runner/readonly.py']:
+   source=(ROOT/name).read_text()
+   for removed in ['require_private','repository_metadata','github-metadata.token','type PRIVATE']:
+    self.assertNotIn(removed,source)
+
+ def test_gated_upgrade_and_retry_preserve_historical_backup_without_token(self):
+  import os
+  upgrade=load('upgrade_diagnostics')
+  with tempfile.TemporaryDirectory() as temporary:
+   host=Path(temporary)
+   def mapped(value):
+    value=str(value)
+    return host/value.lstrip('/') if value.startswith(('/etc/','/usr/')) else Path(value)
+   config=mapped('/etc/nexarm-runner/readonly.json');config.parent.mkdir(parents=True)
+   config.write_text(json.dumps({'container_id':'a'*64,'artifact_paths':['/results']}));config.chmod(0o600)
+   destinations={name:str(mapped(path)) for name,path in upgrade.DESTINATIONS.items()}
+   for name,destination in destinations.items():
+    path=Path(destination);path.parent.mkdir(parents=True,exist_ok=True)
+    source=ROOT/'deploy/runner'/name
+    path.write_bytes((ROOT/'tests/fixtures/diagnostics-gated-readonly.py').read_bytes() if name=='readonly.py' else source.read_bytes())
+    path.chmod(0o644)
+   backup=Path(destinations['readonly.py']+'.pre-diagnostics.bak')
+   old=(ROOT/'tests/fixtures/diagnostics-legacy-readonly.py').read_bytes()
+   backup.write_bytes(old);backup.chmod(0o600)
+   token=config.with_name('github-metadata.token');token.write_text('unused-preserve');token.chmod(0o600)
+   actual_stat=Path.stat
+   def root_stat(path,**kwargs):
+    info=list(actual_stat(path,**kwargs));info[4]=0
+    return os.stat_result(info)
+   for retry in range(2):
+    with patch.object(upgrade,'Path',side_effect=mapped),patch.object(upgrade,'DESTINATIONS',destinations),patch.object(upgrade.os,'geteuid',return_value=0),patch.object(Path,'stat',root_stat),patch.object(upgrade.sys,'argv',['upgrade',str(ROOT/'deploy/runner')]),patch.object(upgrade.sys,'stdin',io.StringIO(json.dumps({'repository':'minciunageorge/nexarm','container_id':'a'*64}))):
+     upgrade.main()
+   self.assertEqual(backup.read_bytes(),old)
+   self.assertEqual(token.read_text(),'unused-preserve')
+   self.assertEqual(json.loads(config.read_text())['artifact_paths'],['/results'])
+   self.assertTrue(json.loads(config.read_text())['diagnostics_enabled'])
+   self.assertEqual(Path(destinations['readonly.py']).read_bytes(),(ROOT/'deploy/runner/readonly.py').read_bytes())

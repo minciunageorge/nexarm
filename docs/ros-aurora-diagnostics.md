@@ -12,78 +12,37 @@ are preserved. No driver, actuator publisher, robot/servo motion, application
 launch, deployment or arbitrary shell/exec interface is enabled. The previous
 container-preservation guard remains unchanged.
 
-## Public repository: blocked until private
+## Public repository and workflow control
 
-**Do not run a robot-hosted runner in an untrusted public repository.** All shipped
-Pi workflows now require `github.event.repository.private == true` on main at the
-job level, before allocating the runner. The new broker also independently checks
-GitHub's authenticated repository metadata on **every operation**, including old
-probe/discovery/collection. Public visibility, unavailable API, revoked/expired
-credentials or unenrolled diagnostics fail closed before any Docker operation.
-A workflow-supplied `private=true` value cannot bypass this root-owned check.
-
-Labels, protected branches and these workflow checks do not make arbitrary public
-workflow execution safe. Another workflow could target a public registered runner,
-and untrusted host code could access networks without using this broker. The
-minimum activation requirement is to change **this existing repository to private**
-and keep workflow authors trusted. That visibility change preserves its URL and
-runner registration. If that is impossible, do not activate this stage; use a
-separate private automation repository and a separately authorized runner migration.
-This stage refuses a selected repository that differs from the existing registration.
-If the public runner previously ran untrusted code, restore trust in that host/workspace
-before allowing any new privilege; a visibility flip does not undo a compromise.
-
-No public-repository diagnostic run is dispatched by this implementation. Existing
-public workflows will skip, not report a passed physical-camera test.
+The owner explicitly permits this repository to remain public for this stage.
+No visibility change, separate automation repository or metadata-read token is
+required. Pi workflows are manual `workflow_dispatch` jobs restricted to main;
+PR/fork CI runs on GitHub-hosted runners. Keep workflow writers trusted, protect
+main, and restrict the `pi-diagnostics` and `pi-readonly` environments to main.
+A public self-hosted runner is not a sandbox for untrusted code: repository writers
+can introduce other workflows, and the fixed broker limits only privileged operations.
 
 ## Minimum one-time activation
 
-1. **While the repository is still public**, download the reviewed standalone script
-   into a new file from your existing pi SSH session (download only; no execution):
+Run as **pi**, while the runner is idle, from your existing SSH session:
 
-   ```sh
-   curl -fL https://raw.githubusercontent.com/minciunageorge/nexarm/main/bootstrap/activate-nexarm-runner.py \
-     -o /home/pi/activate-nexarm-diagnostics.py
-   ```
+```sh
+curl -fL https://raw.githubusercontent.com/minciunageorge/nexarm/main/bootstrap/activate-nexarm-runner.py -o /home/pi/activate-nexarm-diagnostics.py && python3 /home/pi/activate-nexarm-diagnostics.py
+```
 
-   Use a new filename if that file already contains your own changes. If the
-   repository is already private, download through your authenticated GitHub UI
-   and transfer that one file using your existing trusted connection. Unauthenticated
-   raw download will not work after making the repository private.
+Use a new filename if the destination contains your own changes. Accept the default
+repository. An already registered runner needs no registration or metadata token.
+The standalone script checks the preserved registration URL and container ID/guard,
+then upgrades only recognized original, previously visibility-gated or current
+broker files and the exact sudoers policy. Known historical backups are preserved;
+unknown/custom files are never reset. Partial application is resumable. The config
+retains its container ID and artifact path allowlist. Registration, account, guard,
+container and current compatible service unit are not replaced or recreated.
+New ROS/camera operations still require root-owned `diagnostics_enabled: true`.
+Existing probe/discovery/collection do not require this new enrollment.
 
-2. Change repository visibility to private in GitHub settings. Protect main and
-   create `pi-diagnostics`, restricted to main. A required reviewer can provide an
-   additional per-run gate if desired and supported by the GitHub plan. Keep all
-   workflows and repository write access trusted; no PR workflow targets the Pi.
-
-3. Create a fine-grained GitHub token scoped only to this repository with **Metadata:
-   read** permission (no Contents write, Actions write or administration needed).
-   This token is for the Pi's runtime privacy check, distinct from a runner
-   registration token or ChatGPT's Actions API access. Enter it only at the script's
-   hidden local prompt, never in chat. Then run **as pi, while the runner is idle**:
-
-   ```sh
-   python3 /home/pi/activate-nexarm-diagnostics.py
-   ```
-
-The standalone script contains all upgrade files. It authenticates repository
-privacy before changing host permissions, checks the registered repository URL,
-verifies the existing container ID/guard, and upgrades only recognized old/current
-broker files and exact sudoers policy. Custom/unsafe files fail for review; known
-old files are backed up. Partial application is resumable: matching desired files
-are accepted and missing new helper modules are installed. Unknown files are
-never reset to force success. The root-owned config retains its container ID and
-existing artifact path allowlist. Registration, account, guard, container and
-current compatible service unit are not replaced or recreated.
-
-The token is stored only in `/etc/nexarm-runner/github-metadata.token`, root-owned
-mode 600 inside a root-only config directory, and never passed into the container,
-workflow environment, command-line arguments or artifacts. Its value is sent to
-GitHub's HTTPS metadata endpoint only. TLS verification remains enabled. Expiry,
-rate limiting or network failure denies operations; renew the credential by
-rerunning the same reviewed bootstrap with a valid token. The runner service's
-startup probe also fails closed when repository privacy cannot be verified. The
-robot application is not stopped or altered by an API outage.
+Any metadata token/helper left by the previous version is unused and is not read,
+overwritten or exported. The upgrade does not require GitHub API connectivity.
 
 ## Remote operation
 
@@ -96,7 +55,7 @@ No SSH copy/paste is needed for individual diagnostics once enrollment is comple
 Artifacts contain either `metadata.txt` for the ROS graph or `results.tar.gz` with
 `aurora-rgb.ppm` and `camera.json` for one still frame. PPM is a standard lossless
 RGB image format; open/convert it with common image tools. Failure diagnostics go
-in `broker-error.log`. Artifacts are private with seven-day retention and are
+in `broker-error.log`. Artifacts follow GitHub repository access rules with seven-day retention and are
 removed from the runner job workspace afterwards.
 
 ## Execution and limits
@@ -134,7 +93,7 @@ Pi is not yet verified; review actual graph/domain results before expecting imag
 
 ## Validation
 
-Local tests cover privacy failure before Docker access, fixed non-root exec argv,
+Local tests cover enrollment failure before Docker access, fixed non-root exec argv,
 strict output validation, old/new broker upgrade recognition and workflow gates.
 A disposable native x86-64 Humble container demonstrates ROS graph inspection,
 synthetic 640×400 image capture as UID 65534, and missing-publisher timeout. Hosted

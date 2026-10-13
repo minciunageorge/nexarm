@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FILES = ['deploy/bootstrap-preserve.sh', 'deploy/install-pi-runner-host.sh',
          'deploy/runner/readonly.py', 'deploy/runner/nexarm-readonly',
          'deploy/runner/readonly.sudoers', 'deploy/runner/nexarm-actions.service',
-         'deploy/runner/repository_gate.py', 'deploy/runner/container_diagnostics.py',
+         'deploy/runner/container_diagnostics.py',
          'deploy/runner/upgrade_diagnostics.py']
 
 
@@ -379,11 +379,9 @@ def main():
         if shutil.which(command, path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin") is None:
             raise SystemExit(f'Missing prerequisite: {command}; nothing installed automatically')
     run(['sudo', '-v'])
-    repository = input('PRIVATE GitHub repository [minciunageorge/nexarm]: ').strip() or 'minciunageorge/nexarm'
+    repository = input('GitHub repository [minciunageorge/nexarm]: ').strip() or 'minciunageorge/nexarm'
     if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
         raise SystemExit('Use owner/repository, not a URL')
-    if input('Confirm private repository, trusted workflows and protected main; type PRIVATE: ').strip() != 'PRIVATE':
-        raise SystemExit('No activation; private repository confirmation required')
     baseline = subprocess.check_output(['docker', 'inspect', '-f', '{{.Id}} {{.State.Running}} {{.State.StartedAt}}', 'nexarm'], text=True).strip()
     if not re.fullmatch(r'[0-9a-f]{64} true .+', baseline):
         raise SystemExit('Expected running nexarm; no container changes attempted')
@@ -394,19 +392,12 @@ def main():
             target = stage / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(contents)
-        # A typed assertion alone cannot authorize a public robot-hosted runner.
-        # Operator supplies a metadata-read-only token locally, not to workflows.
-        metadata_token=getpass.getpass('GitHub fine-grained metadata-read token for the PRIVATE repository (hidden): ')
-        sys.path.insert(0,str(stage/'deploy/runner'))
-        from repository_gate import repository_metadata
-        repository_metadata(repository,metadata_token)
         registered='/var/lib/nexarm-runner/actions-runner/.runner'
         if subprocess.run(['sudo','test','-f',registered]).returncode==0:
             check='import json,sys; from pathlib import Path; actual=json.loads(Path(sys.argv[1]).read_text()).get("gitHubUrl","").rstrip("/").lower(); assert actual==sys.argv[2].lower(), "Selected repository differs from preserved runner registration"'
             run(['sudo','-H','-u','nexarm-runner','/usr/bin/python3','-I','-c',check,registered,f'https://github.com/{repository}'])
         unit_changed = ensure_host_setup(stage, baseline.split()[0],
-                                         {'repository':repository,'token':metadata_token})
-        metadata_token=None
+                                         {'repository':repository})
         result = subprocess.run(['systemctl', 'is-active', '--quiet', 'nexarm-actions.service'])
         if result.returncode == 0:
             if not refresh_running_runner(unit_changed):

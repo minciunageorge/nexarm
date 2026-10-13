@@ -40,12 +40,6 @@ def docker(arguments, output=None):
     return result.stdout
 
 
-def private_gate(config):
-    sys.path.insert(0,str(Path(__file__).parent))
-    from repository_gate import require_private
-    require_private(config)
-
-
 def observe(operation, identifier):
     # No caller-controlled command/topic/UID/env. No helper copied into container.
     script=Path(__file__).with_name('container_diagnostics.py').read_bytes()
@@ -91,9 +85,8 @@ def observe(operation, identifier):
 def execute(operation, config):
     if operation not in OPERATIONS:
         raise ValueError('Only read-only operations are enabled')
-    # Once enrolled, every broker request rechecks privacy; changing the repo
-    # back to public or losing API authorization fails closed, including startup.
-    private_gate(config)
+    if operation in ('ros-inspect', 'camera-one-frame') and config.get('diagnostics_enabled') is not True:
+        raise ValueError('ROS/camera diagnostics are not enrolled')
     identifier, paths = validate(config)
     current = docker(['inspect', '-f', '{{.Id}}', 'nexarm']).decode().strip()
     if current != identifier:
@@ -103,7 +96,6 @@ def execute(operation, config):
         observe(operation,identifier)
         if before!=docker(['inspect','-f','{{.Id}} {{.State.Running}} {{.State.StartedAt}}',identifier]):
             raise ValueError('Container state changed during observation')
-        private_gate(config)  # visibility/API access must still be valid on completion
     elif operation == 'probe':
         sys.stdout.buffer.write(docker(['inspect', '-f', 'id={{.Id}} running={{.State.Running}} image={{.Image}} started={{.State.StartedAt}}', identifier]))
     elif operation == 'discover-existing':
@@ -147,7 +139,7 @@ def main():
     except ValueError as error:
         raise SystemExit(str(error)) from None
     except (KeyError, RuntimeError, OSError, subprocess.SubprocessError):
-        raise SystemExit('Broker failed closed: verify private repository/API access, container identity and observer timeout') from None
+        raise SystemExit('Broker failed closed: verify enrollment, container identity and observer timeout') from None
 
 
 if __name__ == '__main__':

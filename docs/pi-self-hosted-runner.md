@@ -1,9 +1,9 @@
 # Preferred unattended architecture: GitHub runner on the Pi
 
-**Technically suitable and preferred for this privately controlled project.**
+**Technically suitable and preferred for this owner-controlled project.**
 GitHub supports Linux ARM64 self-hosted runners. A Raspberry Pi 5 with a supported
 64-bit Linux distribution can maintain an outbound HTTPS connection to GitHub,
-receive selected jobs, collect existing logs/images, and upload private artifacts.
+receive selected jobs, collect existing logs/images, and upload artifacts under repository access rules.
 No public IP, inbound forwarding, VPS, SSH tunnel, or online Windows laptop is
 needed. The Pi still needs continuous power, Internet access and enough storage.
 
@@ -26,7 +26,7 @@ activation; architecture alone is insufficient. No live Pi inspection occurred.
 | Resources | Shares Pi RAM, CPU, disk with robot | Most job work runs off robot |
 | Security exposure | Persistent workflow agent on robot host | Agent off robot; relay access still privileged via pi |
 | New privileges in this phase | Fixed read-only broker only | pi SSH account has broad Docker rights |
-| Operational work | Runner maintenance and private workflow governance | VPS, SSH policies, tunnel and credential maintenance |
+| Operational work | Runner maintenance and trusted workflow governance | VPS, SSH policies, tunnel and credential maintenance |
 | Codex interface | GitHub Actions API + artifacts | Same API + artifacts |
 | Remote interactive SSH | Not provided | Available through relay when authorized |
 
@@ -66,17 +66,13 @@ Root-owned code is outside the runner workspace and never imports checkout code.
 A runner job can still execute code as its own account, access networks and modify
 its own persistent work directory. These restrictions **do not isolate ROS/DDS
 network traffic or prove untrusted workflow code cannot affect a robot**. Use
-trusted private workflows only; no untrusted tests or arbitrary user jobs on Pi.
+trusted workflows only; no untrusted tests or arbitrary user jobs on Pi.
 
 ## Workflow governance is required
 
-Use a **private repository with trusted maintainers only**. If nexarm is public,
-register this runner only to a separate private automation repository and copy the
-read-only workflow/adapter there. Do not register it to a public repository. A
-label selects a runner; it is not an authorization boundary. Other workflows in
-a permitted repository can target it, so review all workflows and enforce branch
-and repository write protections. Organization runner groups can further scope
-repositories/workflows where the GitHub plan supports those controls.
+The owner permits the public nexarm repository for this stage. No separate private
+repository or visibility change is required. Keep workflow writers trusted and
+Pi workflows manual/main-only; never select the Pi runner for PR/fork tests.
 
 `pi-readonly.yml` is manual/API-dispatch only, gated to main, serialized, with a
 ten-minute job timeout and environment `pi-readonly`. No PR, push, schedule,
@@ -100,7 +96,7 @@ Pi-side steps below with local prompts; the detailed steps remain for review.
    into a new host directory. No files go into the container. Confirm `uname -m`
    is `aarch64` and the OS is currently supported by GitHub's Linux ARM64 runner.
    Do not upgrade the robot OS or Docker as part of this procedure.
-2. Create/configure the private GitHub repository, protected main branch and
+2. Configure the GitHub repository, protected main branch and
    `pi-readonly` environment before registering the runner. Publish the reviewed
    workflow and adapter. No repository push/settings changes have been performed
    here. Hosted CI remains responsible for ordinary framework tests.
@@ -116,7 +112,7 @@ Pi-side steps below with local prompts; the detailed steps remain for review.
    register, enable or start a runner. It uses only Docker info/inspect to enroll
    the existing container. `visudo -cf` is mandatory before installing policy.
 
-4. In the private repository's Settings → Actions → Runners → New self-hosted
+4. In the repository's Settings → Actions → Runners → New self-hosted
    runner, select **Linux / ARM64**. Use its current version-specific official
    download commands and SHA256 verification instructions. Download and extract
    only into `/var/lib/nexarm-runner/actions-runner`, owned by nexarm-runner.
@@ -130,7 +126,7 @@ Pi-side steps below with local prompts; the detailed steps remain for review.
    # Run GitHub's current Linux ARM64 download + checksum + extraction commands.
    # Keep TLS and checksum verification enabled. Do not use RUNNER_ALLOW_RUNASROOT.
    # Install only documented missing host dependencies after reviewing their effect.
-   ./config.sh --url https://github.com/YOUR_OWNER/YOUR_PRIVATE_REPOSITORY \
+   ./config.sh --url https://github.com/YOUR_OWNER/YOUR_REPOSITORY \
      --token ONE_TIME_REGISTRATION_TOKEN --name nexarm-pi5-readonly \
      --labels nexarm-readonly --work _work
    exit
@@ -185,7 +181,7 @@ connectivity but do not fix expired registration or broken OS dependencies.
 
 ## Day-to-day ChatGPT/Codex interface
 
-Codex dispatches the GitHub workflow, waits for its result, downloads the private
+Codex dispatches the GitHub workflow, waits for its result, downloads the
 artifact and analyzes it. No SSH/private Pi credential is needed in Codex or
 GitHub Actions secrets for this design; runner registration keeps its own GitHub
 credentials on the Pi. Do not expose those credential files in artifacts.
@@ -193,7 +189,7 @@ credentials on the Pi. Do not expose those credential files in artifacts.
 A GitHub integration/API binding capable of Actions dispatch, polling and artifact
 download is still required in ChatGPT/Codex. It has not been established here.
 Git clone authentication is not proof of Actions API authorization. Provision that
-access securely, scoped to the private automation repository, without pasting
+access securely, scoped to this repository, without pasting
 credentials in chat. The self-hosted runner solves the transport, not this API
 integration prerequisite. Temporary GitHub UI dispatch is possible until that
 integration exists, with the laptop still unnecessary for the Pi connection.

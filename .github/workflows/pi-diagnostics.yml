@@ -16,7 +16,7 @@ concurrency:
 jobs:
   diagnose:
     # Public repositories fail before allocation of any self-hosted runner.
-    if: github.event.repository.private == true && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
     environment: pi-diagnostics
     timeout-minutes: 3

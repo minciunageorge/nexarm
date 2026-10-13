@@ -6,17 +6,11 @@ multi-command host installer is required on the Pi.
 
 ## Before running
 
-Use a private GitHub repository with trusted workflows and protected `main`.
-Publish the reviewed project changes, including `pi-readonly.yml`, `pi-verify.yml`
-and their Python adapters, to that repository's main branch. These commits have
-not been pushed by Codex. Create the GitHub environment `pi-readonly`, restricted
-to main. The script asks for the private owner/repository and uses your confirmation;
-it does not treat a public/private lookup failure as proof of privacy.
-
-If nexarm is public, use a separate private automation repository containing the
-reviewed workflow/adapter files. Do not enroll a robot-hosted runner in a public
-repository. This initial GitHub-side setup cannot be replaced by a Pi command
-without separately provisioned repository administration credentials.
+The owner permits the public `minciunageorge/nexarm` repository. Use trusted
+workflows, protected main and main-only `pi-readonly` / `pi-diagnostics` environments.
+No visibility change or metadata token is required. See
+[the diagnostics upgrade procedure](ros-aurora-diagnostics.md) for an existing runner.
+Never run untrusted PR/fork code on the Pi.
 
 ## The Pi command
 
@@ -32,9 +26,8 @@ Do **not** run the Python script with sudo. It asks sudo only for the reviewed h
 setup, registration as the dedicated user, and installation/start of its own
 service. It asks for:
 
-1. The private repository (`minciunageorge/nexarm` is suggested, not assumed private).
-2. A typed `PRIVATE` confirmation of your repository/workflow policy.
-3. GitHub's short-lived **runner registration token** from Settings → Actions →
+1. The repository (`minciunageorge/nexarm` is suggested).
+2. GitHub's short-lived **runner registration token** from Settings → Actions →
    Runners → New self-hosted runner → Linux ARM64. Paste only at the hidden prompt
    in your SSH session; never paste the token into ChatGPT.
 
@@ -67,7 +60,7 @@ robot to repair such a failure.
 
 ## Harmless verification after activation
 
-In the private repository's Actions tab, select **Pi harmless verification**,
+In the repository's Actions tab, select **Pi harmless verification**,
 then **Run workflow** on `main`. Once GitHub Actions API access is securely
 configured for Codex, Codex can dispatch and retrieve this same job instead of
 you using the UI. That API integration is not established by runner registration
@@ -80,7 +73,7 @@ The workflow:
 - Uses only the installed broker for approved container status, ROS-path metadata
   discovery, and bounded existing Docker logs/result collection.
 - Compares before/after container diagnostic state, including start timestamp.
-- Uploads a seven-day private verification artifact and removes job result files.
+- Uploads a seven-day verification artifact and removes job result files.
 
 It does not start ROS nodes, read camera devices, run tests in the robot container,
 deploy or execute any motion. Initial `artifact_paths=[]` means ROS log/camera file
