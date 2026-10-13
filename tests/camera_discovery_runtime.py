@@ -10,12 +10,15 @@ sys.path.insert(0,"/opt/ros/humble/local/lib/python3.10/dist-packages")
 sys.path.insert(0,"/opt/ros/humble/lib/python3.10/site-packages")
 import rclpy
 from sensor_msgs.msg import Image
+from std_srvs.srv import Trigger
 from rclpy.qos import QoSProfile,ReliabilityPolicy
 rclpy.init();n=rclpy.create_node("depth_cam")
+noise=rclpy.create_node("graph_noise")
+services=[noise.create_service(Trigger,"/synthetic_unrelated_"+str(i),lambda req,res:res) for i in range(220)]
 p=[n.create_publisher(Image,"/depth_cam/"+c+"/image_raw",QoSProfile(depth=1,reliability=ReliabilityPolicy.RELIABLE)) for c in ["rgb","depth","ir"]]
 deadline=time.monotonic()+24
 while time.monotonic()<deadline:rclpy.spin_once(n,timeout_sec=0.1)
-n.destroy_node();rclpy.shutdown()
+noise.destroy_node();n.destroy_node();rclpy.shutdown()
 '''
 try:
  # Reproduce live-style permissions solely inside this disposable container.
@@ -31,6 +34,8 @@ try:
    assert report['operation']==operation and report['recovery']['enabled'] is False
    assert report['recovery']['status']=='refused'
    assert report['status']=='partial',report
+   assert report['graph']['total_services']>200,report
+   assert report['graph']['scanned_services']==report['graph']['total_services'],report
    assert any(e['section']=='container_devices' and e['error_type']=='PermissionError' for e in report['probe_errors']),report
    assert any(p['official_launch'] and p['node_pid_mapping_proven'] is False for p in report['processes']),report
    assert any(n['name']=='/depth_cam' for n in report['nodes']),report

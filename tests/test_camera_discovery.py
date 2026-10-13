@@ -145,3 +145,56 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(result['processes'],[{'pid':7}])
         self.assertEqual(result['probe_errors'][0]['section'],'container_devices')
         self.assertFalse(result['recovery']['enabled'])
+
+    def test_large_graph_filters_camera_before_output_limits_and_marks_scan_truncation(self):
+        for size in [300,5000]:
+            node=MagicMock()
+            entries=[('unrelated_'+str(i),'/') for i in range(size)]
+            entries.insert(250,('depth_cam','/'))
+            entries.append(('depth_cam','/'))
+            node.get_node_names_and_namespaces.return_value=entries
+            node.get_service_names_and_types.return_value=[('/unrelated_'+str(i),['std_srvs/srv/Trigger']) for i in range(size)]
+            node.get_service_names_and_types_by_node.return_value=[]
+            node.get_publishers_info_by_topic.return_value=[types.SimpleNamespace(node_name='depth_cam',node_namespace='/')]
+            node.count_publishers.return_value=1
+            ticks=iter(range(100))
+            ns=definitions({'node':node,'time':types.SimpleNamespace(monotonic=lambda:next(ticks)),
+                            'rclpy':types.SimpleNamespace(spin_once=lambda *a,**k:None),
+                            'HEALTH_TOPICS':{'rgb':'/depth_cam/rgb/image_raw'},'os':os,
+                            'get_rmw_implementation_identifier':lambda:'rmw_fastrtps_cpp'})
+            ns.update(process_inventory=lambda:[{'pid':7}],usb_inventory=lambda:{'visible':True,'devices':[{'product':'Aurora'}]},device_visibility=lambda:{},shared_memory_visibility=lambda:[])
+            report=ns['aurora_discover']()
+            self.assertEqual([n['name'] for n in report['nodes']],['/depth_cam'])
+            self.assertEqual(report['graph']['total_services'],size)
+            self.assertLessEqual(report['graph']['scanned_services'],4096)
+            self.assertEqual(report['status'],'partial' if size>4096 else 'complete')
+            self.assertEqual(report['graph']['service_scan_truncated'],size>4096)
+            self.assertEqual(report['processes'],[{'pid':7}])
+            self.assertEqual(report['container_usb']['devices'][0]['product'],'Aurora')
+            self.assertFalse(report['recovery']['enabled'])
+            node.get_service_names_and_types_by_node.assert_called_once_with('depth_cam','/')
+
+    def test_large_component_graph_prioritizes_camera_manager_and_keeps_ids_aligned(self):
+        import sys
+        from unittest.mock import patch
+        class ListNodes:
+            class Request:pass
+        module=types.ModuleType('composition_interfaces.srv');module.ListNodes=ListNodes
+        names=['/noise_'+str(i) for i in range(250)]+['/depth_cam']
+        future=MagicMock();future.done.return_value=True;future.exception.return_value=None
+        future.result.return_value=types.SimpleNamespace(full_node_names=names,unique_ids=list(range(251)))
+        client=MagicMock();client.wait_for_service.return_value=True;client.call_async.return_value=future
+        node=MagicMock();node.create_client.return_value=client
+        ns=definitions({'node':node,'time':types.SimpleNamespace(monotonic=lambda:0),'rclpy':MagicMock()})
+        services=[('/manager_'+str(i)+'/list_nodes',['composition_interfaces/srv/ListNodes']) for i in range(30)]
+        services.append(('/depth_cam/_container/list_nodes',['composition_interfaces/srv/ListNodes']))
+        with patch.dict(sys.modules,{'composition_interfaces':types.ModuleType('composition_interfaces'),'composition_interfaces.srv':module}):
+            report=ns['component_membership'](services)
+        self.assertEqual(len(report),16)
+        self.assertEqual(report[0]['service'],'/depth_cam/_container/list_nodes')
+        self.assertEqual(report[0]['status'],'truncated')
+        self.assertEqual(len(report[0]['nodes']),200)
+        self.assertEqual(report[0]['nodes'][0],'/depth_cam')
+        self.assertEqual(report[0]['component_ids'][0],250)
+        self.assertTrue(report[0]['includes_known_camera'])
+        self.assertEqual(node.destroy_client.call_count,16)

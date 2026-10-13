@@ -217,3 +217,7 @@ class DiagnosticsTests(unittest.TestCase):
    self.assertEqual(error.exception.code,1)
    self.assertEqual(json.loads((output/'broker-error.log').read_text()),record)
    self.assertFalse((output/'metadata.txt').exists())
+
+ def test_previous_partial_discovery_observer_can_upgrade(self):
+  upgrade=load('upgrade_diagnostics')
+  upgrade.require_known_file('container_diagnostics.py',(ROOT/'tests/fixtures/diagnostics-partial-container_diagnostics.py').read_bytes(),(ROOT/'deploy/runner/container_diagnostics.py').read_bytes())

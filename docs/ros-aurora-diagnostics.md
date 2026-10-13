@@ -243,3 +243,24 @@ reproduce the permission-denied failure path under UID 65534 in a disposable
 container and confirm discovery returns useful partial evidence. Rerun the new
 bootstrap while idle, then `aurora-discover`; an unexpected fatal error now exports
 its actual cause. Restart remains disabled regardless of discovery success.
+
+## Large ROS graphs
+
+Discovery filters the graph for the two known Aurora node names and read-only
+component-manager services before applying output limits. It no longer fails
+merely because the graph exceeds 200 nodes/services. The report includes total
+and scanned node/service counts and explicit truncation flags. Each graph scan
+is capped at 4096 entries; only the two unique known camera nodes are emitted.
+A truncated scan is `partial` and cannot prove that an omitted node is absent.
+Process and USB probes still run independently.
+
+At most 16 unique component-manager services are queried, prioritizing known
+camera paths and DePtrum names, within the existing four-second deadline. Large
+component membership responses retain at most 200 aligned node/ID pairs, prioritize
+known camera nodes within a 4096-entry scan, and report total/scanned counts and
+truncation. No restart is enabled and existing output/CPU/memory/time limits remain.
+
+The exact live failure `RuntimeError: Discovery graph limit exceeded` is addressed
+by this filtering/partial-result policy. Rerun the updated bootstrap while idle,
+then `aurora-discover`. Regression tests include a 5000-entry graph and a native
+Humble graph with more than 200 services; this does not constitute a live Pi test.

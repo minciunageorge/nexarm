@@ -267,7 +267,7 @@ def shared_memory_visibility():
 
 def component_membership(services):
     managers=[name for name,types in services if 'composition_interfaces/srv/ListNodes' in types]
-    if len(managers)>16:raise RuntimeError('Component manager limit exceeded')
+    managers=sorted(set(managers),key=lambda name:(not any(name.startswith(camera+'/') for camera in CAMERA_NODES), 'deptrum' not in name.lower(),name))[:16]
     if not managers:return []
     try:
         from composition_interfaces.srv import ListNodes
@@ -286,12 +286,17 @@ def component_membership(services):
             if not future.done() or future.exception() is not None:
                 results.append({'service':name,'status':'timeout_or_error'});continue
             response=future.result()
-            if len(response.full_node_names)>200 or len(response.unique_ids)!=len(response.full_node_names):
-                raise RuntimeError('Component membership limit/shape exceeded')
-            results.append({'service':name,'status':'reported','nodes':list(response.full_node_names),
-                            'component_ids':list(response.unique_ids),
-                            'includes_known_camera':any(n in CAMERA_NODES for n in response.full_node_names),
-                            'other_nodes_present':any(n not in CAMERA_NODES for n in response.full_node_names)})
+            if len(response.unique_ids)!=len(response.full_node_names):
+                raise RuntimeError('Component membership shape mismatch')
+            total=len(response.full_node_names)
+            scan=min(total,4096)
+            indexes=sorted(range(scan),key=lambda i:(response.full_node_names[i] not in CAMERA_NODES,i))[:200]
+            results.append({'service':name,'status':'truncated' if total>200 else 'reported',
+                            'total_nodes':total,'scanned_nodes':scan,'nodes_truncated':total>200,'scan_truncated':total>scan,
+                            'nodes':[response.full_node_names[i] for i in indexes],
+                            'component_ids':[response.unique_ids[i] for i in indexes],
+                            'includes_known_camera':any(n in CAMERA_NODES for n in response.full_node_names[:scan]),
+                            'other_nodes_present':any(n not in CAMERA_NODES for n in response.full_node_names[:scan])})
         finally:node.destroy_client(client)
     return results
 
@@ -310,12 +315,24 @@ def aurora_discover():
     while time.monotonic()<deadline:rclpy.spin_once(node,timeout_sec=0.1)
     nodes=node.get_node_names_and_namespaces()
     services=node.get_service_names_and_types()
-    if len(nodes)>200 or len(services)>200:raise RuntimeError('Discovery graph limit exceeded')
+    node_total=len(nodes);service_total=len(services)
+    node_scan=min(node_total,4096);service_scan=min(service_total,4096)
+    nodes=nodes[:node_scan];services=services[:service_scan]
+    manager_matches=sum('composition_interfaces/srv/ListNodes' in types for _,types in services)
+    graph={'total_nodes':node_total,'total_services':service_total,
+           'scanned_nodes':node_scan,'scanned_services':service_scan,
+           'scan_limit':4096,'node_scan_truncated':node_total>node_scan,
+           'service_scan_truncated':service_total>service_scan,
+           'component_manager_matches':manager_matches,'component_manager_limit':16,
+           'component_managers_truncated':manager_matches>16}
     errors=[]
+    truncated=node_total>node_scan or service_total>service_scan or manager_matches>16
+    seen=set()
     camera_nodes=[]
     for name,namespace in nodes:
         full=namespace.rstrip('/')+'/'+name
-        if full not in CAMERA_NODES:continue
+        if full not in CAMERA_NODES or full in seen:continue
+        seen.add(full)
         def services_for_node(name=name,namespace=namespace):
             offered=node.get_service_names_and_types_by_node(name,namespace)
             if len(offered)>64:raise RuntimeError('Camera service limit exceeded')
@@ -332,6 +349,7 @@ def aurora_discover():
         publishers[channel]={'topic':topic,'publisher_count':node.count_publishers(topic),
                              'nodes':[endpoint.node_namespace.rstrip('/')+'/'+endpoint.node_name for endpoint in endpoints]}
     components=probe_section('component_membership',lambda:component_membership(services),[],errors)
+    truncated=truncated or any(result.get('nodes_truncated',False) for result in components)
     processes=probe_section('processes',process_inventory,[],errors)
     usb=probe_section('container_usb',usb_inventory,{'visible':None,'devices':[]},errors)
     devices=probe_section('container_devices',device_visibility,{'devices':[],'truncated':False},errors)
@@ -340,7 +358,8 @@ def aurora_discover():
             'component_manager_services':components, 'processes':processes,
             'container_usb':usb,'container_devices':devices,
             'observer_uid':os.geteuid(), 'dds_shared_memory':shared_memory,
-            'status':'partial' if errors else 'complete', 'probe_errors':errors,
+            'status':'partial' if errors or truncated else 'complete', 'probe_errors':errors,
+            'graph':graph, 'truncated':truncated,
             'ros_domain_id':os.environ.get('ROS_DOMAIN_ID','0'),'rmw':get_rmw_implementation_identifier(),
             'recovery':{'enabled':False,'status':'refused',
                         'reason':'Live process/component ownership and camera-only restart mechanism are not yet proven',
