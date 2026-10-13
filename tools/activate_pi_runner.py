@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """One-time Pi activation; generated standalone copy embeds reviewed host files."""
 import getpass
+from collections import deque
+from pathlib import PurePosixPath
 import hashlib
 import json
 import os
@@ -36,16 +38,119 @@ def release_metadata(data):
 
 
 def verify_archive(path):
-    # Reject archive traversal/link escapes before extracting as non-root runner.
+    """Resolve archive links with POSIX semantics, including linked ancestors.
+
+    Symlink targets are relative to their parent; hardlink targets are relative
+    to the archive root. Check both extraction-time and final graphs so forward
+    links and later directory aliases cannot hide an escape.
+    """
     with tarfile.open(path) as archive:
-        for member in archive:
-            name = Path(member.name)
-            if name.is_absolute() or '..' in name.parts or member.isdev() or member.isfifo():
-                raise ValueError('Unsafe archive member')
-            if member.issym() or member.islnk():
-                target = Path(member.linkname)
-                if target.is_absolute() or '..' in target.parts:
+        members = archive.getmembers()
+    nodes = {}
+
+    def member_name(member):
+        name = PurePosixPath(member.name)
+        if name.is_absolute() or '..' in name.parts or '\x00' in member.name:
+            raise ValueError('Unsafe archive member')
+        if not (member.isfile() or member.isdir() or member.issym() or member.islnk()):
+            raise ValueError('Unsafe archive member type')
+        return tuple(part for part in name.parts if part != '.')
+
+    def resolve(parts, graph, follow_final_symlink=True):
+        pending = deque(parts)
+        resolved = []
+        expansions = 0
+        while pending:
+            part = pending.popleft()
+            if part in ('', '.'):
+                continue
+            if part == '..':
+                if not resolved:
+                    raise ValueError('Archive link resolves outside extraction root')
+                resolved.pop()
+                continue
+            resolved.append(part)
+            node = graph.get(tuple(resolved))
+            if node and node.issym() and not pending and not follow_final_symlink:
+                return tuple(resolved)
+            if node and (node.issym() or node.islnk()):
+                target = PurePosixPath(node.linkname)
+                if target.is_absolute() or not node.linkname or '\x00' in node.linkname:
                     raise ValueError('Unsafe archive link')
+                expansions += 1
+                if expansions > len(graph) + 40:
+                    raise ValueError('Cyclic or excessive archive link chain')
+                # Hardlinks name an archive-root path, NOT a parent-relative path.
+                resolved = resolved[:-1] if node.issym() else []
+                pending.extendleft(reversed(target.parts))
+            elif node and pending and not node.isdir():
+                raise ValueError('Archive path has a non-directory ancestor')
+        return tuple(resolved)
+
+    for member in members:
+        name = member_name(member)
+        if not name and not member.isdir():
+            raise ValueError('Unsafe archive root entry')
+        parent = resolve(name[:-1], nodes)
+        # Track physical destinations after resolving ancestor aliases. Leaving
+        # these keyed by their textual archive names can hide a nested link.
+        destination = parent + name[-1:]
+        for length in range(1, len(parent) + 1):
+            prefix = parent[:length]
+            if prefix not in nodes:
+                directory = tarfile.TarInfo('/'.join(prefix))
+                directory.type = tarfile.DIRTYPE
+                nodes[prefix] = directory
+        previous = nodes.get(destination)
+        if previous and not (previous.isdir() and member.isdir()):
+            raise ValueError('Duplicate archive member can change link semantics')
+        # Validate the destination using links already created by extraction.
+        nodes[destination] = member
+        if member.issym() or member.islnk():
+            resolve(destination, nodes)
+
+    for name, member in nodes.items():
+        resolve(name, nodes)
+        if member.issym():
+            # Validate this header's target even if a later ancestor alias makes
+            # its original name unreachable in the final graph.
+            parent = resolve(name[:-1], nodes)
+            resolve(parent + PurePosixPath(member.linkname).parts, nodes)
+        if member.islnk():
+            target = resolve(PurePosixPath(member.linkname).parts, nodes, follow_final_symlink=False)
+            destination = nodes.get(target)
+            if destination is None or not destination.isfile():
+                raise ValueError('Archive hardlink must resolve to a regular file')
+
+
+def ensure_host_setup(stage, container_id):
+    """Reuse identical protected host setup, never reinstall or overwrite it."""
+    installed = subprocess.run(['sudo', 'test', '-e', '/usr/local/sbin/nexarm-readonly']).returncode == 0
+    if not installed:
+        run(['sudo', 'bash', str(stage / 'deploy/install-pi-runner-host.sh')])
+        return
+    destinations = {'deploy/runner/readonly.py': '/usr/local/lib/nexarm-runner/readonly.py',
+                    'deploy/runner/nexarm-readonly': '/usr/local/sbin/nexarm-readonly',
+                    'deploy/runner/readonly.sudoers': '/etc/sudoers.d/nexarm-readonly',
+                    'deploy/runner/nexarm-actions.service': '/etc/systemd/system/nexarm-actions.service'}
+    for source, target in destinations.items():
+        if subprocess.run(['sudo', 'test', '-L', target]).returncode == 0:
+            raise ValueError('Installed host file is a symlink; review required')
+        result = subprocess.run(['sudo', 'cmp', '-s', str(stage / source), target])
+        if result.returncode:
+            raise ValueError('Existing host setup differs; preserving it for administrator review')
+        owner, mode = subprocess.check_output(['sudo', 'stat', '-c', '%u %a', target], text=True).split()
+        if owner != '0' or int(mode, 8) & 0o022:
+            raise ValueError('Installed host file has unsafe ownership or permissions')
+    groups = subprocess.check_output(['id', '-Gn', 'nexarm-runner'], text=True).split()
+    if set(groups) & {'root', 'sudo', 'docker'}:
+        raise ValueError('Runner account has unexpected privileged groups')
+    guard = Path('/home/pi/.local/share/nexarm/protect-existing').read_text().strip()
+    if guard != container_id:
+        raise ValueError('Preservation guard differs from live container; review required')
+    # Installed broker also validates its root-owned config and enrolled identity.
+    run(['sudo', '-H', '-u', 'nexarm-runner', '/usr/bin/sudo', '-n', '/usr/local/sbin/nexarm-readonly', 'probe'])
+    print('Resuming: protected host setup already complete; no files/account/guard overwritten.')
 
 
 def run(command, **kwargs):
@@ -76,18 +181,7 @@ def main():
             target = stage / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(contents)
-        # Root's installer runs the pi preservation helper; stage is pi-owned.
-        installed = Path('/usr/local/sbin/nexarm-readonly').exists()
-        if installed:
-            destinations = {'deploy/runner/readonly.py': '/usr/local/lib/nexarm-runner/readonly.py',
-                            'deploy/runner/nexarm-readonly': '/usr/local/sbin/nexarm-readonly',
-                            'deploy/runner/readonly.sudoers': '/etc/sudoers.d/nexarm-readonly',
-                            'deploy/runner/nexarm-actions.service': '/etc/systemd/system/nexarm-actions.service'}
-            for source, target in destinations.items():
-                run(['sudo', 'cmp', '-s', str(stage / source), target])
-            run(['sudo', '-H', '-u', 'nexarm-runner', '/usr/bin/sudo', '-n', '/usr/local/sbin/nexarm-readonly', 'probe'])
-        else:
-            run(['sudo', 'bash', str(stage / 'deploy/install-pi-runner-host.sh')])
+        ensure_host_setup(stage, baseline.split()[0])
         result = subprocess.run(['systemctl', 'is-active', '--quiet', 'nexarm-actions.service'])
         if result.returncode == 0:
             print('Runner service already active; no restart or re-registration performed.')

@@ -100,3 +100,28 @@ by this cloud instance's egress proxy; the script's live release download remain
 to be tested from the Pi's normal Internet connection. Parser/unit checks cannot
 substitute for that operation. The existing `visudo` validation is mandatory on
 the Pi even though this cloud machine lacks the parser.
+
+
+## Recovery from the official runner's Node link rejection
+
+The earlier verifier rejected every `..` component in a link target. GitHub's
+bundled Node/npm links legitimately use `../lib/...` from `externals/node*/bin`.
+The corrected verifier resolves those parent-relative symlinks and archive-root
+hardlinks, tracking ancestor aliases at their physical destinations. It rejects
+out-of-root/absolute targets, cycles, link pivots, special files, and hardlinks to
+symlink inodes; SHA256 verification stays mandatory.
+
+The fix was validated against GitHub's official ARM64 v2.330.0 archive after
+checking its published SHA256, plus adversarial synthetic archive tests. No
+runner binaries were executed during investigation.
+
+Download the updated `bootstrap/activate-nexarm-runner.py` from GitHub main and
+replace only your local activation-script copy. Run it again as pi. Completed
+host preparation is detected and verified using matching root-owned files,
+runner groups, the existing preservation guard and the read-only broker probe.
+The host payload itself is unchanged; no broker, account, allowlist, guard or
+service configuration is overwritten. The reported archive failure occurs
+before creation of the runner extraction directory, so this retry can proceed
+from your completed host stage. If a separate later attempt created an
+unconfigured partial runner directory, the script still stops for explicit
+inspection rather than overwriting it. No robot container change is required.
