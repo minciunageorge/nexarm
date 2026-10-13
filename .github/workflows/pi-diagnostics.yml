@@ -12,6 +12,7 @@ on:
     branches: [main]
     paths:
       - '.nexarm/camera-trigger.txt'
+      - '.nexarm/ros-trigger.txt'
 permissions:
   contents: read
 concurrency:
@@ -29,7 +30,7 @@ jobs:
           persist-credentials: false
       - name: Run only the installed approved observer
         env:
-          OPERATION: ${{ github.event_name == 'push' && 'camera-one-frame' || inputs.operation }}
+          OPERATION: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, 'ROS inspect') && 'ros-inspect' || github.event_name == 'push' && 'camera-one-frame' || inputs.operation }}
         run: python3 tools/pi_runner_job.py "$OPERATION"
       - name: Export diagnostic artifacts and failure evidence
         if: always()
