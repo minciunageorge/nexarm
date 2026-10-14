@@ -158,7 +158,7 @@ class DiagnosticsTests(unittest.TestCase):
   self.assertNotIn('*',policy)
   self.assertNotIn('NOPASSWD: ALL',policy)
   workflow=(ROOT/'.github/workflows/pi-diagnostics.yml').read_text()
-  self.assertIn('options: [ros-inspect, camera-one-frame, aurora-health, aurora-discover, aurora-recover]',workflow)
+  self.assertIn('options: [diagnostics-suite, probe, discover-existing, collect-existing, ros-inspect, camera-one-frame, aurora-health, aurora-discover, aurora-recover]',workflow)
   self.assertIn("'.nexarm/aurora-trigger.txt'",workflow)
   self.assertNotIn('pull_request',workflow)
 

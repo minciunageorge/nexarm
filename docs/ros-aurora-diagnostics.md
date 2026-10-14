@@ -285,3 +285,33 @@ unreadable to the fixed UID 65534 observer; no privileged fallback is added.
 Rerun the updated standalone bootstrap while the runner is idle, then run
 `aurora-discover` and inspect `sdk` in `metadata.txt`. No new sudoers operation or
 workflow permission is needed. No SDK test execution is enabled by this update.
+
+## One remote diagnostics bundle
+
+Select **Pi approved ROS and Aurora diagnostics** → **Run workflow** → branch
+`main` → `diagnostics-suite` (the default). It runs only installed approved
+operations: container probe/discovery, ROS graph inspection, Aurora process/USB/SDK
+metadata discovery, RGB/depth/IR stream health, one RGB still, and Docker log
+collection. Independent checks continue after failures. No SDK sample executes,
+no process restarts, no deployment, and no motion commands are enabled.
+
+This orchestration update needs **no Pi bootstrap rerun** when the existing
+ROS/Aurora broker is enrolled. An older broker refuses unavailable operations;
+there is no automatic privilege upgrade or fallback to arbitrary Docker execution.
+
+The artifact has a folder per operation, raw `stdout.txt` (or `stdout.bin` for
+archive output), `broker-error.log` for stderr, and `result.json` with exit status,
+duration and timeout state. Successful operations also retain the familiar
+`metadata.txt` or `results.tar.gz`; failed partial archives remain raw output.
+`manifest.json` summarizes all operations. Any failure fails the job, but the
+artifact upload still runs. The adapter has an eight-minute total deadline and
+the workflow allows ten minutes for execution and artifact upload. Artifacts
+expire after seven days. Saved camera-file paths remain limited to previously
+enrolled paths; the fixed one-frame observer needs no discovered filesystem path.
+
+For Codex environments with Git push but no Actions API access, a trusted main
+commit changing `.nexarm/diagnostics-trigger.txt` with `NexArm diagnostics` in its
+commit message requests this same suite. Ordinary code pushes and PRs do not run
+Pi diagnostics. This change itself does not dispatch a live Pi job. Git push
+access alone does not provide artifact download access; results are available in
+GitHub Actions or through an authenticated Actions integration.

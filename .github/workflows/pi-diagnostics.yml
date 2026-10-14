@@ -6,11 +6,12 @@ on:
         description: Fixed diagnostic; recovery is currently report-only and never restarts a driver
         required: true
         type: choice
-        default: ros-inspect
-        options: [ros-inspect, camera-one-frame, aurora-health, aurora-discover, aurora-recover]
+        default: diagnostics-suite
+        options: [diagnostics-suite, probe, discover-existing, collect-existing, ros-inspect, camera-one-frame, aurora-health, aurora-discover, aurora-recover]
   push:
     branches: [main]
     paths:
+      - '.nexarm/diagnostics-trigger.txt'
       - '.nexarm/camera-trigger.txt'
       - '.nexarm/ros-trigger.txt'
       - '.nexarm/aurora-trigger.txt'
@@ -25,14 +26,14 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
     environment: pi-diagnostics
-    timeout-minutes: 3
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
       - name: Run only the installed approved observer
         env:
-          OPERATION: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, 'Aurora discover') && 'aurora-discover' || github.event_name == 'push' && contains(github.event.head_commit.message, 'Aurora health') && 'aurora-health' || github.event_name == 'push' && contains(github.event.head_commit.message, 'ROS inspect') && 'ros-inspect' || github.event_name == 'push' && 'camera-one-frame' || inputs.operation }}
+          OPERATION: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, 'NexArm diagnostics') && 'diagnostics-suite' || github.event_name == 'push' && contains(github.event.head_commit.message, 'Aurora discover') && 'aurora-discover' || github.event_name == 'push' && contains(github.event.head_commit.message, 'Aurora health') && 'aurora-health' || github.event_name == 'push' && contains(github.event.head_commit.message, 'ROS inspect') && 'ros-inspect' || github.event_name == 'push' && 'camera-one-frame' || inputs.operation }}
         run: python3 tools/pi_runner_job.py "$OPERATION"
       - name: Export diagnostic artifacts and failure evidence
         if: always()
