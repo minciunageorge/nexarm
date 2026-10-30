@@ -11,7 +11,7 @@ jobs:
     runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
     timeout-minutes: 5
     steps:
-      - name: Compare ROS visibility without sending motion commands
+      - name: Inspect controller and factory launch environment
         shell: bash
         run: |
           set -u
@@ -19,11 +19,9 @@ jobs:
           mkdir -p "$out"
           docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; ros2 node list | sort' > "$out/root-node-list.txt" 2>&1 || true
           docker exec --user ubuntu nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; ros2 node list | sort' > "$out/ubuntu-node-list.txt" 2>&1 || true
-          docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; timeout 6 ros2 topic hz /aurora/rgb/image_raw' > "$out/root-camera-hz.txt" 2>&1 || true
-          docker exec --user ubuntu nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; timeout 6 ros2 topic hz /aurora/rgb/image_raw' > "$out/ubuntu-camera-hz.txt" 2>&1 || true
-          docker exec --user ubuntu nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; ros2 topic info /ros_robot_controller/arm/set_coords -v' > "$out/ubuntu-set-coords-info.txt" 2>&1 || true
-          docker exec --user ubuntu nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; ros2 node info /ros_robot_controller' > "$out/ubuntu-controller-node-info.txt" 2>&1 || true
+          docker exec nexarm bash -lc 'p=$(pgrep -u ubuntu -f "^/usr/bin/python3 /opt/ros/humble/bin/ros2 launch bringup bringup.launch.py$" | head -n1); echo PID=$p; [ -n "$p" ] && { echo CWD=$(readlink /proc/$p/cwd); tr "\0" "\n" < /proc/$p/environ | grep -E "^(CAMERA_TYPE|CHASSIS_TYPE|MACHINE_TYPE|LIDAR_TYPE|ROS_DOMAIN_ID|RMW_IMPLEMENTATION|PYTHONPATH|LD_LIBRARY_PATH|PATH)="; }' > "$out/factory-bringup-env.txt" 2>&1 || true
           docker exec nexarm ps -eo pid,ppid,user,stat,args > "$out/processes.txt" 2>&1 || true
+          docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; ros2 topic info /ros_robot_controller/arm/set_coords -v' > "$out/set-coords-info.txt" 2>&1 || true
       - name: Upload inspection
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
