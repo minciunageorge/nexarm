@@ -11,18 +11,19 @@ jobs:
     runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
     timeout-minutes: 5
     steps:
-      - name: Inspect controller without sending motion commands
+      - name: Compare ROS visibility without sending motion commands
         shell: bash
         run: |
           set -u
           out="$RUNNER_TEMP/controller-inspect"
           mkdir -p "$out"
-          docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; ros2 topic info /ros_robot_controller/arm/set_coords -v' > "$out/set-coords-info.txt" 2>&1 || true
-          docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; ros2 node list | sort' > "$out/node-list.txt" 2>&1 || true
-          docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; ros2 node info /ros_robot_controller' > "$out/controller-node-info.txt" 2>&1 || true
+          docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; ros2 node list | sort' > "$out/root-node-list.txt" 2>&1 || true
+          docker exec --user ubuntu nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; ros2 node list | sort' > "$out/ubuntu-node-list.txt" 2>&1 || true
+          docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; timeout 6 ros2 topic hz /aurora/rgb/image_raw' > "$out/root-camera-hz.txt" 2>&1 || true
+          docker exec --user ubuntu nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; timeout 6 ros2 topic hz /aurora/rgb/image_raw' > "$out/ubuntu-camera-hz.txt" 2>&1 || true
+          docker exec --user ubuntu nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; ros2 topic info /ros_robot_controller/arm/set_coords -v' > "$out/ubuntu-set-coords-info.txt" 2>&1 || true
+          docker exec --user ubuntu nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; ros2 node info /ros_robot_controller' > "$out/ubuntu-controller-node-info.txt" 2>&1 || true
           docker exec nexarm ps -eo pid,ppid,user,stat,args > "$out/processes.txt" 2>&1 || true
-          docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; ros2 topic list | grep -E "ros_robot_controller|servo_controller|controller_manager" | sort' > "$out/controller-topics.txt" 2>&1 || true
-          docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; ros2 topic info /ros_robot_controller/bus_servo/set_position -v' > "$out/bus-servo-info.txt" 2>&1 || true
       - name: Upload inspection
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
