@@ -1,0 +1,32 @@
+name: Create NexArm BACKUP-005
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/backup-005.yml'
+permissions:
+  contents: read
+jobs:
+  backup:
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 5
+    steps:
+      - name: Create stable local backup without changing robot state
+        shell: bash
+        run: |
+          set -euo pipefail
+          dst=/home/pi/nexarm-backups/BACKUP-005
+          test ! -e "$dst"
+          mkdir -p "$dst/home-pi/nexarm-buttons" "$dst/home-pi/Desktop" "$dst/home-pi/.local/bin" "$dst/meta"
+          cp -a /home/pi/nexarm-buttons/. "$dst/home-pi/nexarm-buttons/"
+          for f in /home/pi/Desktop/VERDE.desktop /home/pi/Desktop/ROSU.desktop /home/pi/Desktop/ALBASTRU.desktop /home/pi/Desktop/GALBEN.desktop /home/pi/Desktop/CAPSUNA.desktop /home/pi/Desktop/PORNIRE-BRAT.desktop /home/pi/Desktop/OPRIRE-BRAT.desktop /home/pi/Desktop/NexArm-HOME.desktop; do
+            [ ! -e "$f" ] || cp -a "$f" "$dst/home-pi/Desktop/"
+          done
+          [ ! -e /home/pi/.local/bin/nexarm-home.sh ] || cp -a /home/pi/.local/bin/nexarm-home.sh "$dst/home-pi/.local/bin/"
+          date -Is > "$dst/meta/created-at.txt"
+          printf '%s\n' 'BACKUP-005 stable baseline: working custom camera + root controller + color/strawberry buttons' > "$dst/meta/README.txt"
+          /home/pi/nexarm-buttons/nexarm-mode.sh status > "$dst/meta/mode-status.txt" 2>&1 || true
+          tar -C /home/pi/nexarm-backups -czf /home/pi/nexarm-backups/BACKUP-005.tar.gz BACKUP-005
+          sha256sum /home/pi/nexarm-backups/BACKUP-005.tar.gz > /home/pi/nexarm-backups/BACKUP-005.sha256
+          ls -lh /home/pi/nexarm-backups/BACKUP-005.tar.gz
+          cat /home/pi/nexarm-backups/BACKUP-005.sha256
