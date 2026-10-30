@@ -6,6 +6,7 @@ LOG=/home/pi/nexarm-buttons/mode-switch.log
 LOCK=/tmp/nexarm-mode.lock
 CUSTOM_CAM='^/usr/bin/python3 /opt/ros/humble/bin/ros2 launch deptrum-ros-driver-aurora930 aurora930_launch.py$'
 SAVED_CMD=/tmp/nexarm-factory-camera.cmdline
+CUSTOM_LOG=/tmp/nexarm-custom-camera-root.log
 
 mkdir -p "$(dirname "$LOG")"
 exec 9>"$LOCK"
@@ -96,10 +97,8 @@ start_custom() {
   save_and_stop_factory_camera || return 1
 
   sleep 2
-  docker exec "$CONTAINER" bash -lc ': > /tmp/nexarm-custom-camera.log'
-  docker exec -d "$CONTAINER" bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; ros2 launch deptrum-ros-driver-aurora930 aurora930_launch.py >/tmp/nexarm-custom-camera.log 2>&1'
+  docker exec -d "$CONTAINER" bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; ros2 launch deptrum-ros-driver-aurora930 aurora930_launch.py >/tmp/nexarm-custom-camera-root.log 2>&1'
 
-  # Match the proven direct-launch reproduction: let the driver fully initialize first.
   sleep 4
   if custom_launch_present && custom_camera_child_present && camera_has_frames; then
     echo CUSTOM_READY_CAMERA_14FPS
@@ -107,7 +106,7 @@ start_custom() {
   fi
 
   echo CUSTOM_VERIFY_FAILED_RESTORING_FACTORY_CAMERA
-  docker exec "$CONTAINER" bash -lc 'ps -eo pid,ppid,user,stat,args | grep -E "aurora930_node|ros2 launch deptrum" | grep -v grep || true; tail -n 100 /tmp/nexarm-custom-camera.log 2>/dev/null || true'
+  docker exec "$CONTAINER" bash -lc 'ps -eo pid,ppid,user,stat,args | grep -E "aurora930_node|ros2 launch deptrum" | grep -v grep || true; tail -n 100 /tmp/nexarm-custom-camera-root.log 2>/dev/null || true'
   stop_custom_camera || true
   sleep 1
   restore_factory_camera || true
