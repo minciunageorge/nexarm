@@ -1,1 +1,1 @@
-trigger 2026-10-30 after-start-button-with-log
+trigger 2026-10-30 post-reboot-factory-check
