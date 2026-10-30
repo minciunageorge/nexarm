@@ -1,0 +1,46 @@
+name: Deploy CAPSUNA V4 button
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/strawberry-v4-deploy.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deploy:
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Syntax check
+        run: python3 -m py_compile deploy/strawberry-v4/strawberry_v4.py
+      - name: Install V4 files without touching V1 V2 V3
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 0644 deploy/strawberry-v4/strawberry_v4.py /home/pi/nexarm-buttons/strawberry_v4.py
+          install -m 0755 deploy/strawberry-v4/strawberry_v4.sh /home/pi/nexarm-buttons/strawberry_v4.sh
+          cat > /home/pi/Desktop/CAPSUNA-V4.desktop <<'EOF'
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=CAPSUNA V4
+          Comment=Detecteaza fir verde subtire, cauta in jos si foloseste RGBD 3D
+          Exec=/home/pi/nexarm-buttons/strawberry_v4.sh
+          Icon=applications-engineering
+          Terminal=false
+          Categories=Utility;
+          EOF
+          chmod +x /home/pi/Desktop/CAPSUNA-V4.desktop
+      - name: Verify install without executing robot motion
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x /home/pi/nexarm-buttons/strawberry_v4.sh
+          test -f /home/pi/nexarm-buttons/strawberry_v4.py
+          test -x /home/pi/Desktop/CAPSUNA-V4.desktop
+          python3 -m py_compile /home/pi/nexarm-buttons/strawberry_v4.py
+          echo CAPSUNA_V4_INSTALLED
