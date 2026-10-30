@@ -21,6 +21,9 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/aurora-inspect
           docker exec nexarm ps -eo pid,ppid,user,stat,args > artifacts/aurora-inspect/processes.txt
+          docker exec nexarm id > artifacts/aurora-inspect/docker-exec-id.txt 2>&1 || true
+          docker inspect -f '{{.Config.User}}' nexarm > artifacts/aurora-inspect/container-config-user.txt 2>&1 || true
+          docker exec nexarm bash -lc 'printf "USER=%s\nHOME=%s\n" "$(id -un)" "$HOME"' > artifacts/aurora-inspect/docker-exec-env.txt 2>&1 || true
           docker exec nexarm bash -lc 'cat /home/ubuntu/ros2_ws/src/peripherals/launch/depth_camera.launch.py' > artifacts/aurora-inspect/depth_camera.launch.py
           docker exec nexarm bash -lc 'cat /home/ubuntu/ros2_ws/src/peripherals/launch/include/aurora930.launch.py' > artifacts/aurora-inspect/hiwonder_aurora930.launch.py
           docker exec nexarm bash -lc 'cat /home/ubuntu/third_party_ros2/third_party_ws/src/deptrum-ros-driver-aurora930-0.2.1001/launch_aurora930/launch/aurora930_launch.py' > artifacts/aurora-inspect/deptrum_direct_aurora930.launch.py
