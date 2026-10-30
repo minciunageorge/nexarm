@@ -1,9 +1,13 @@
 #!/bin/bash
 set -u
 LOG=/home/pi/nexarm-buttons/strawberry-v4-last.log
+LOCK=/tmp/capsuna-v4.lock
 
-if command -v zenity >/dev/null 2>&1; then
-  zenity --question --title="CAPSUNA V4" --text="V4 va cobori bratul din HOME in pasi de 10 mm pana gaseste firul verde, apoi revine HOME daca nu il gaseste. Continui?" || exit 0
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  echo "=== CAPSUNA V4 $(date -Is) ===" >"$LOG"
+  echo "CAPSUNA_V4_DEJA_RULEAZA" >>"$LOG"
+  exit 0
 fi
 
 {
