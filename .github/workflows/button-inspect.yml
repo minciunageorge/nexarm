@@ -1,0 +1,46 @@
+name: NexArm read-only desktop button inspection
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.nexarm/button-inspect-trigger.txt'
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 5
+    steps:
+      - name: Collect button files and logs only
+        shell: bash
+        run: |
+          set -u
+          mkdir -p "$RUNNER_TEMP/button-inspect"
+          out="$RUNNER_TEMP/button-inspect"
+          ls -la /home/pi/Desktop > "$out/desktop-list.txt" 2>&1 || true
+          for f in /home/pi/Desktop/*NexArm* /home/pi/Desktop/*PORNIRE* /home/pi/Desktop/*OPRIRE* /home/pi/Desktop/*VERDE* /home/pi/Desktop/*ROSU* /home/pi/Desktop/*ALBASTRU* /home/pi/Desktop/*GALBEN* /home/pi/Desktop/*CAPSUNA*; do
+            [ -f "$f" ] || continue
+            echo "===== $f =====" >> "$out/desktop-files.txt"
+            cat "$f" >> "$out/desktop-files.txt" 2>&1 || true
+          done
+          ls -la /home/pi/nexarm-buttons > "$out/buttons-list.txt" 2>&1 || true
+          for f in /home/pi/nexarm-buttons/start-arm.sh /home/pi/nexarm-buttons/stop-arm.sh /home/pi/nexarm-buttons/green.sh /home/pi/nexarm-buttons/red.sh /home/pi/nexarm-buttons/blue.sh /home/pi/nexarm-buttons/yellow.sh /home/pi/nexarm-buttons/strawberry.sh; do
+            [ -f "$f" ] || continue
+            echo "===== $f =====" >> "$out/wrappers.txt"
+            cat "$f" >> "$out/wrappers.txt" 2>&1 || true
+          done
+          for f in /home/pi/nexarm-buttons/autopick_base.py /home/pi/nexarm-buttons/green.py /home/pi/nexarm-buttons/red.py /home/pi/nexarm-buttons/blue.py /home/pi/nexarm-buttons/yellow.py /home/pi/nexarm-buttons/strawberry.py; do
+            [ -f "$f" ] || continue
+            echo "===== $f =====" >> "$out/python-topic-lines.txt"
+            grep -nE 'aurora|depth_cam|set_coords|ArmCoords|create_subscription|topic|docker exec|ros2' "$f" >> "$out/python-topic-lines.txt" 2>&1 || true
+          done
+          find /home/pi/nexarm-buttons -maxdepth 1 -type f \( -name '*.log' -o -name '*last*' \) -print -exec sh -c 'echo "===== $1 ====="; tail -n 160 "$1" 2>&1' _ {} \; > "$out/button-logs.txt" 2>&1 || true
+          /home/pi/nexarm-buttons/nexarm-mode.sh status > "$out/mode-status.txt" 2>&1 || true
+          docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; ros2 topic list | sort | grep -E "^/aurora/|^/depth_cam/|ros_robot_controller/arm/set_coords"' > "$out/topics.txt" 2>&1 || true
+      - name: Upload inspection
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: button-inspect-${{ github.run_id }}
+          path: ${{ runner.temp }}/button-inspect/
+          retention-days: 7
