@@ -1,0 +1,37 @@
+name: NexArm camera-only live mode test
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.nexarm/mode-live-test-trigger.txt'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: nexarm-camera-mode-live-test
+  cancel-in-progress: false
+jobs:
+  test:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 3
+    steps:
+      - name: Start authorized camera-only custom mode
+        shell: bash
+        run: |
+          set +e
+          /home/pi/nexarm-buttons/nexarm-mode.sh start
+          rc=$?
+          mkdir -p /home/pi/nexarm-mode-test-artifacts
+          /home/pi/nexarm-buttons/nexarm-mode.sh status > /home/pi/nexarm-mode-test-artifacts/status.txt 2>&1 || true
+          docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; timeout 6 ros2 topic hz /aurora/rgb/image_raw' > /home/pi/nexarm-mode-test-artifacts/hz.txt 2>&1 || true
+          tail -n 200 /home/pi/nexarm-buttons/mode-switch.log > /home/pi/nexarm-mode-test-artifacts/mode-switch.log 2>&1 || true
+          docker exec nexarm bash -lc 'tail -n 160 /tmp/nexarm-custom-camera.log 2>/dev/null || true' > /home/pi/nexarm-mode-test-artifacts/custom-camera.log 2>&1 || true
+          exit $rc
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nexarm-camera-mode-test-${{ github.run_id }}
+          path: /home/pi/nexarm-mode-test-artifacts/
+          retention-days: 7
