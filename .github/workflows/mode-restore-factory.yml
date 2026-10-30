@@ -1,0 +1,19 @@
+name: Restore NexArm factory camera
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.nexarm/mode-restore-factory-trigger.txt'
+permissions:
+  contents: read
+jobs:
+  restore:
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 2
+    steps:
+      - name: Restore factory camera only
+        shell: bash
+        run: |
+          /home/pi/nexarm-buttons/nexarm-mode.sh stop || true
+          sleep 3
+          /home/pi/nexarm-buttons/nexarm-mode.sh status || true
