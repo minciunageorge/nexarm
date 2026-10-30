@@ -4,12 +4,8 @@ set -euo pipefail
 CONTAINER=nexarm
 LOG=/home/pi/nexarm-buttons/mode-switch.log
 LOCK=/tmp/nexarm-mode.lock
-FACTORY='^/usr/bin/python3 /opt/ros/humble/bin/ros2 launch bringup bringup.launch.py$'
 CUSTOM_CAM='^/usr/bin/python3 /opt/ros/humble/bin/ros2 launch deptrum-ros-driver-aurora930 aurora930_launch.py$'
-CUSTOM_CTRL='^/usr/bin/python3 /opt/ros/humble/bin/ros2 launch sdk nexarm.launch.py$'
-CAM_NODE='aurora930_node'
-CTRL_NODE='ros_robot_controller'
-SERVO_NODE='servo_controller'
+SAVED_CMD=/tmp/nexarm-factory-camera.cmdline
 
 mkdir -p "$(dirname "$LOG")"
 exec 9>"$LOCK"
@@ -21,51 +17,61 @@ pgrep_exact() {
   docker exec "$CONTAINER" pgrep -u ubuntu -f "$1" >/dev/null 2>&1
 }
 
-signal_exact() {
-  local sig="$1" pattern="$2"
-  docker exec "$CONTAINER" bash -lc "p=\$(pgrep -u ubuntu -f '$pattern' || true); [ -z \"\$p\" ] || kill -$sig \$p"
+factory_camera_pid() {
+  docker exec "$CONTAINER" bash -lc 'for p in $(pgrep -u ubuntu -x aurora930_node 2>/dev/null || true); do c=$(tr "\0" " " < /proc/$p/cmdline 2>/dev/null || true); case "$c" in *"/depth_cam/rgb/image_raw"*) echo "$p"; exit 0;; esac; done; exit 1'
 }
 
-wait_gone() {
-  local pattern="$1" limit="${2:-40}"
-  for ((i=0;i<limit;i++)); do
-    pgrep_exact "$pattern" || return 0
+custom_camera_child_present() {
+  docker exec "$CONTAINER" bash -lc 'for p in $(pgrep -u ubuntu -x aurora930_node 2>/dev/null || true); do c=$(tr "\0" " " < /proc/$p/cmdline 2>/dev/null || true); case "$c" in *"/depth_cam/rgb/image_raw"*) ;; *) exit 0;; esac; done; exit 1'
+}
+
+save_and_stop_factory_camera() {
+  local pid
+  pid="$(factory_camera_pid)" || { echo FACTORY_CAMERA_NOT_FOUND; return 1; }
+  docker exec "$CONTAINER" bash -lc "cat /proc/$pid/cmdline > $SAVED_CMD"
+  docker exec "$CONTAINER" kill -INT "$pid"
+  for ((i=0;i<40;i++)); do
+    docker exec "$CONTAINER" test -e "/proc/$pid" || { echo FACTORY_CAMERA_STOPPED; return 0; }
     sleep 0.25
   done
-  return 1
+  docker exec "$CONTAINER" kill -TERM "$pid" 2>/dev/null || true
+  sleep 1
+  docker exec "$CONTAINER" test ! -e "/proc/$pid" || { echo FACTORY_CAMERA_DID_NOT_STOP; return 1; }
+  echo FACTORY_CAMERA_STOPPED_AFTER_TERM
 }
 
-known_factory_children_present() {
-  docker exec "$CONTAINER" bash -lc "pgrep -u ubuntu -f 'aurora930_node|ros_robot_controller|servo_controller|lab_manager|finger_trace|object_tracking|object_sorting|shape_recognition|yolo_node|waste_classification|web_video_server|rosbridge|scene5_peer_agent' >/dev/null 2>&1"
-}
-
-start_factory() {
-  if pgrep_exact "$FACTORY"; then
-    echo FACTORY_ALREADY_RUNNING
-    return 0
-  fi
-  docker exec -d --user ubuntu "$CONTAINER" bash -lc 'export CAMERA_TYPE=aurora CHASSIS_TYPE=None; source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; exec /opt/ros/humble/bin/ros2 launch bringup bringup.launch.py >>/tmp/nexarm-factory-restore.log 2>&1'
-  for ((i=0;i<60;i++)); do
-    if pgrep_exact "$FACTORY"; then
-      echo FACTORY_STARTED
+stop_custom_camera() {
+  docker exec "$CONTAINER" bash -lc "p=\$(pgrep -u ubuntu -f '$CUSTOM_CAM' || true); [ -z \"\$p\" ] || kill -INT \$p"
+  sleep 1
+  docker exec "$CONTAINER" bash -lc 'for p in $(pgrep -u ubuntu -x aurora930_node 2>/dev/null || true); do c=$(tr "\0" " " < /proc/$p/cmdline 2>/dev/null || true); case "$c" in *"/depth_cam/rgb/image_raw"*) ;; *) kill -INT "$p" 2>/dev/null || true;; esac; done'
+  for ((i=0;i<40;i++)); do
+    if ! pgrep_exact "$CUSTOM_CAM" && ! custom_camera_child_present; then
+      echo CUSTOM_CAMERA_STOPPED
       return 0
     fi
     sleep 0.25
   done
-  echo FACTORY_START_FAILED
-  return 1
+  docker exec "$CONTAINER" bash -lc 'for p in $(pgrep -u ubuntu -x aurora930_node 2>/dev/null || true); do c=$(tr "\0" " " < /proc/$p/cmdline 2>/dev/null || true); case "$c" in *"/depth_cam/rgb/image_raw"*) ;; *) kill -TERM "$p" 2>/dev/null || true;; esac; done'
+  sleep 1
+  ! custom_camera_child_present
 }
 
-stop_custom() {
-  signal_exact INT "$CUSTOM_CAM"
-  signal_exact INT "$CUSTOM_CTRL"
-  wait_gone "$CUSTOM_CAM" 40 || true
-  wait_gone "$CUSTOM_CTRL" 40 || true
-  sleep 1
-  if docker exec "$CONTAINER" pgrep -u ubuntu -f "$CAM_NODE|$CTRL_NODE|$SERVO_NODE" >/dev/null 2>&1; then
-    echo CUSTOM_CHILD_REMAINS
-    return 1
+restore_factory_camera() {
+  if factory_camera_pid >/dev/null 2>&1; then
+    echo FACTORY_CAMERA_ALREADY_RUNNING
+    return 0
   fi
+  docker exec "$CONTAINER" test -s "$SAVED_CMD" || { echo NO_SAVED_FACTORY_CAMERA_COMMAND; return 1; }
+  docker exec -d --user ubuntu "$CONTAINER" bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; python3 -c '\''import os; raw=open("/tmp/nexarm-factory-camera.cmdline","rb").read().split(b"\0"); a=[x.decode() for x in raw if x]; os.execv(a[0],a)'\'' >>/tmp/nexarm-factory-camera-restored.log 2>&1'
+  for ((i=0;i<60;i++)); do
+    if factory_camera_pid >/dev/null 2>&1; then
+      echo FACTORY_CAMERA_RESTORED
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo FACTORY_CAMERA_RESTORE_FAILED
+  return 1
 }
 
 verify_custom() {
@@ -74,61 +80,57 @@ verify_custom() {
 }
 
 start_custom() {
-  if pgrep_exact "$CUSTOM_CAM" && pgrep_exact "$CUSTOM_CTRL" && ! pgrep_exact "$FACTORY"; then
-    verify_custom && { echo CUSTOM_ALREADY_RUNNING; return 0; }
+  if pgrep_exact "$CUSTOM_CAM" && custom_camera_child_present; then
+    verify_custom && { echo CUSTOM_ALREADY_READY; return 0; }
   fi
 
-  stop_custom || true
+  stop_custom_camera || true
 
-  if pgrep_exact "$FACTORY"; then
-    signal_exact INT "$FACTORY"
-    if ! wait_gone "$FACTORY" 60; then
-      echo FACTORY_DID_NOT_STOP
-      return 1
-    fi
-    sleep 2
-  fi
-
-  if known_factory_children_present; then
-    echo FACTORY_CHILDREN_REMAIN_ABORTING_CUSTOM
-    start_factory || true
+  if ! factory_camera_pid >/dev/null 2>&1; then
+    echo FACTORY_CAMERA_MISSING_REFUSING_SWITCH
     return 1
   fi
+  save_and_stop_factory_camera || return 1
 
   docker exec -d --user ubuntu "$CONTAINER" bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; exec /opt/ros/humble/bin/ros2 launch deptrum-ros-driver-aurora930 aurora930_launch.py >>/tmp/nexarm-custom-camera.log 2>&1'
-  docker exec -d --user ubuntu "$CONTAINER" bash -lc 'export CHASSIS_TYPE=None; source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; exec /opt/ros/humble/bin/ros2 launch sdk nexarm.launch.py >>/tmp/nexarm-custom-controller.log 2>&1'
 
-  ready=0
   for ((i=0;i<40;i++)); do
-    if pgrep_exact "$CUSTOM_CAM" && pgrep_exact "$CUSTOM_CTRL"; then ready=1; break; fi
+    if pgrep_exact "$CUSTOM_CAM" && custom_camera_child_present; then break; fi
     sleep 0.25
   done
-  if ((ready==1)) && verify_custom; then
-    echo CUSTOM_READY
+
+  if pgrep_exact "$CUSTOM_CAM" && custom_camera_child_present && verify_custom; then
+    echo CUSTOM_READY_CAMERA_ONLY
     return 0
   fi
 
-  echo CUSTOM_VERIFY_FAILED_ROLLING_BACK
-  stop_custom || true
-  start_factory || true
+  echo CUSTOM_VERIFY_FAILED_RESTORING_FACTORY_CAMERA
+  stop_custom_camera || true
+  restore_factory_camera || true
   return 1
 }
 
+return_factory() {
+  stop_custom_camera || return 1
+  restore_factory_camera
+}
+
 status() {
-  local f=0 c=0 r=0
-  pgrep_exact "$FACTORY" && f=1 || true
-  pgrep_exact "$CUSTOM_CAM" && c=1 || true
-  pgrep_exact "$CUSTOM_CTRL" && r=1 || true
-  echo "factory=$f custom_camera=$c custom_controller=$r"
-  if ((f==1 && c==0 && r==0)); then echo MODE=FACTORY; return 0; fi
-  if ((f==0 && c==1 && r==1)); then echo MODE=CUSTOM; return 0; fi
-  echo MODE=MIXED_OR_STOPPED
-  return 2
+  local f=0 c=0 ctrl=0 bringup=0
+  factory_camera_pid >/dev/null 2>&1 && f=1 || true
+  { pgrep_exact "$CUSTOM_CAM" || custom_camera_child_present; } && c=1 || true
+  docker exec "$CONTAINER" pgrep -u ubuntu -x ros_robot_controller >/dev/null 2>&1 && ctrl=1 || true
+  docker exec "$CONTAINER" pgrep -u ubuntu -f '^/usr/bin/python3 /opt/ros/humble/bin/ros2 launch bringup bringup.launch.py$' >/dev/null 2>&1 && bringup=1 || true
+  echo "factory_camera=$f custom_camera=$c controller=$ctrl bringup=$bringup"
+  if ((f==1 && c==0 && ctrl==1)); then echo MODE=FACTORY; return 0; fi
+  if ((f==0 && c==1 && ctrl==1)); then echo MODE=CUSTOM; return 0; fi
+  echo MODE=INCOMPLETE
+  return 0
 }
 
 case "${1:-status}" in
   start|custom) start_custom ;;
-  stop|factory) stop_custom && start_factory ;;
+  stop|factory) return_factory ;;
   status) status ;;
   *) echo "usage: $0 {start|stop|status}"; exit 2 ;;
 esac
