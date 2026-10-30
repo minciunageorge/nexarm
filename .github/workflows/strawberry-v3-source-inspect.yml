@@ -1,0 +1,31 @@
+name: Inspect CAPSUNA V3 Hiwonder 3D source
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/strawberry-v3-source-inspect.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 5
+    steps:
+      - name: Collect installed 3D gripping source read-only
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/strawberry-v3-source
+          docker exec nexarm bash -lc 'cat /home/ubuntu/ros2_ws/src/example/example/rgbd_function/include/track_and_grab.py' > artifacts/strawberry-v3-source/track_and_grab.py
+          docker exec nexarm bash -lc 'find /home/ubuntu/ros2_ws/src -type f \( -name "*hand*eye*.yaml" -o -name "*calibration*.yaml" -o -name "transform.yaml" \) -print' > artifacts/strawberry-v3-source/config-paths.txt
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            b=$(basename "$f")
+            docker exec nexarm bash -lc "cat '$f'" > "artifacts/strawberry-v3-source/${b}.txt" 2>/dev/null || true
+          done < artifacts/strawberry-v3-source/config-paths.txt
+      - name: Upload source artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: strawberry-v3-source-${{ github.run_id }}
+          path: artifacts/strawberry-v3-source/
+          retention-days: 7
