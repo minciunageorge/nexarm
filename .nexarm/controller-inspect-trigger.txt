@@ -1,1 +1,1 @@
-trigger 2026-10-30 controller-no-motion-check
+trigger 2026-10-30 root-vs-ubuntu-ros-visibility
