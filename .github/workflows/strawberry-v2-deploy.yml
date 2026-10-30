@@ -1,0 +1,48 @@
+name: Deploy CAPSUNA V2 button
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/strawberry-v2/**'
+      - '.github/workflows/strawberry-v2-deploy.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: nexarm-strawberry-v2-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Syntax check only
+        run: |
+          python3 -m py_compile deploy/strawberry-v2/strawberry_v2.py
+          bash -n deploy/strawberry-v2/strawberry_v2.sh
+      - name: Install new files without touching working CAPSUNA
+        run: |
+          mkdir -p /home/pi/nexarm-buttons
+          [ ! -e /home/pi/nexarm-buttons/strawberry_v2.py ] || cp -n /home/pi/nexarm-buttons/strawberry_v2.py /home/pi/nexarm-buttons/strawberry_v2.py.before-github
+          [ ! -e /home/pi/nexarm-buttons/strawberry_v2.sh ] || cp -n /home/pi/nexarm-buttons/strawberry_v2.sh /home/pi/nexarm-buttons/strawberry_v2.sh.before-github
+          install -m 0644 deploy/strawberry-v2/strawberry_v2.py /home/pi/nexarm-buttons/strawberry_v2.py
+          install -m 0755 deploy/strawberry-v2/strawberry_v2.sh /home/pi/nexarm-buttons/strawberry_v2.sh
+      - name: Create separate desktop button
+        run: |
+          test -f /home/pi/Desktop/CAPSUNA.desktop
+          cp -a /home/pi/Desktop/CAPSUNA.desktop /home/pi/Desktop/CAPSUNA-V2.desktop
+          sed -i 's|^Name=.*|Name=CAPSUNA V2|' /home/pi/Desktop/CAPSUNA-V2.desktop
+          sed -i 's|^Exec=.*|Exec=/home/pi/nexarm-buttons/strawberry_v2.sh|' /home/pi/Desktop/CAPSUNA-V2.desktop
+          chmod +x /home/pi/Desktop/CAPSUNA-V2.desktop
+          gio set /home/pi/Desktop/CAPSUNA-V2.desktop metadata::trusted true >/dev/null 2>&1 || true
+      - name: Verify install without executing robot code
+        run: |
+          test -x /home/pi/nexarm-buttons/strawberry_v2.sh
+          test -f /home/pi/nexarm-buttons/strawberry_v2.py
+          grep '^Name=CAPSUNA V2$' /home/pi/Desktop/CAPSUNA-V2.desktop
+          grep '^Exec=/home/pi/nexarm-buttons/strawberry_v2.sh$' /home/pi/Desktop/CAPSUNA-V2.desktop
+          echo CAPSUNA_V2_INSTALLED
