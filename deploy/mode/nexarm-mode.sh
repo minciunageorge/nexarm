@@ -96,7 +96,11 @@ start_custom() {
   fi
   save_and_stop_factory_camera || return 1
 
-  docker exec -d "$CONTAINER" bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; exec /opt/ros/humble/bin/ros2 launch deptrum-ros-driver-aurora930 aurora930_launch.py >>/tmp/nexarm-custom-camera.log 2>&1'
+  # Give the vendor USB stack time to release the device completely.
+  sleep 2
+
+  # Intentionally match the exact root launch form that previously produced ~14 FPS.
+  docker exec -d "$CONTAINER" bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; ros2 launch deptrum-ros-driver-aurora930 aurora930_launch.py >>/tmp/nexarm-custom-camera.log 2>&1'
 
   for ((i=0;i<40;i++)); do
     if custom_launch_present && custom_camera_child_present; then break; fi
@@ -109,13 +113,16 @@ start_custom() {
   fi
 
   echo CUSTOM_VERIFY_FAILED_RESTORING_FACTORY_CAMERA
+  docker exec "$CONTAINER" bash -lc 'echo "--- custom camera diagnostics ---"; date -Is; ps -eo pid,ppid,user,stat,args | grep -E "aurora930_node|ros2 launch deptrum" | grep -v grep || true; tail -n 80 /tmp/nexarm-custom-camera.log 2>/dev/null || true'
   stop_custom_camera || true
+  sleep 1
   restore_factory_camera || true
   return 1
 }
 
 return_factory() {
   stop_custom_camera || return 1
+  sleep 1
   restore_factory_camera
 }
 
