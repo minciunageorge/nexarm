@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/strawberry-v3-inspect.yml'
+      - 'tools/strawberry_v3_probe.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -12,6 +13,9 @@ jobs:
     runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
       - name: Inspect Aurora topics and sample depth read-only
         shell: bash
         run: |
@@ -22,31 +26,8 @@ jobs:
             echo "===== $t =====" >> artifacts/strawberry-v3-inspect/info.txt
             docker exec nexarm bash -lc "source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; ros2 topic info '$t' -v" >> artifacts/strawberry-v3-inspect/info.txt 2>&1 || true
           done
-          docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; python3 - <<"PY"
-import rclpy, numpy as np, time
-from rclpy.node import Node
-from sensor_msgs.msg import Image, CameraInfo
-rclpy.init()
-n=Node("capsuna_v3_rgbd_probe")
-state={"rgb":None,"depth":None,"rgbinfo":None,"irinfo":None}
-def rgb(m): state["rgb"]=(m.width,m.height,m.encoding,m.step)
-def depth(m):
-    a=np.frombuffer(m.data,dtype=np.uint16).reshape(m.height,m.width)
-    v=a[(a>0)&(a<10000)]
-    state["depth"]=(m.width,m.height,m.encoding,m.step,int(np.median(v)) if v.size else None,int(v.min()) if v.size else None,int(v.max()) if v.size else None)
-def ri(m): state["rgbinfo"]=(m.width,m.height,list(m.k))
-def ii(m): state["irinfo"]=(m.width,m.height,list(m.k))
-n.create_subscription(Image,"/aurora/rgb/image_raw",rgb,10)
-n.create_subscription(Image,"/aurora/depth/image_raw",depth,10)
-n.create_subscription(CameraInfo,"/aurora/rgb/camera_info",ri,10)
-n.create_subscription(CameraInfo,"/aurora/ir/camera_info",ii,10)
-end=time.time()+8
-while time.time()<end and rclpy.ok():
-    rclpy.spin_once(n,timeout_sec=0.2)
-    if state["rgb"] and state["depth"] and (state["rgbinfo"] or state["irinfo"]): break
-for k,v in state.items(): print(k,"=",v)
-n.destroy_node(); rclpy.shutdown()
-PY' > artifacts/strawberry-v3-inspect/sample.txt
+          docker cp tools/strawberry_v3_probe.py nexarm:/tmp/strawberry_v3_probe.py >/dev/null
+          docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; python3 /tmp/strawberry_v3_probe.py' > artifacts/strawberry-v3-inspect/sample.txt
       - name: Upload inspection artifact
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
