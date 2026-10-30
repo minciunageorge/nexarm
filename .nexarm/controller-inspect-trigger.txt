@@ -1,1 +1,1 @@
-trigger 2026-10-30 root-vs-ubuntu-ros-visibility
+trigger 2026-10-30 factory-bringup-env
