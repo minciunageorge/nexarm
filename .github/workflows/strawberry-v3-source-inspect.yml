@@ -17,7 +17,8 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/strawberry-v3-source
           docker exec nexarm bash -lc 'cat /home/ubuntu/ros2_ws/src/example/example/rgbd_function/include/track_and_grab.py' > artifacts/strawberry-v3-source/track_and_grab.py
-          docker exec nexarm bash -lc 'cat /home/ubuntu/ros2_ws/src/example/example/rgbd_function/include/utils.py' > artifacts/strawberry-v3-source/utils.py
+          UTIL=$(docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; python3 -c "from app.utils import utils; print(utils.__file__)"')
+          docker exec nexarm bash -lc "cat '$UTIL'" > artifacts/strawberry-v3-source/utils.py
           docker exec nexarm bash -lc 'cat /home/ubuntu/ros2_ws/src/peripherals/config/camera_info.yaml' > artifacts/strawberry-v3-source/camera_info.yaml
           docker exec nexarm bash -lc 'cat /home/ubuntu/ros2_ws/src/app/config/calibration.yaml' > artifacts/strawberry-v3-source/calibration.yaml
           docker exec nexarm bash -lc 'cat /home/ubuntu/ros2_ws/src/app/config/transform.yaml' > artifacts/strawberry-v3-source/transform.yaml
