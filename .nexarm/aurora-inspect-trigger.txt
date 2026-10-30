@@ -1,1 +1,1 @@
-trigger 2026-10-30 verify-root-camera-start
+trigger 2026-10-30 inspect-container-exec-user
