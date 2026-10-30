@@ -1,0 +1,28 @@
+name: Inspect CAPSUNA V4 live state
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/strawberry-v4-live-inspect.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 5
+    steps:
+      - name: Read V4 log and processes only
+        shell: bash
+        run: |
+          set -u
+          echo '===== LAST LOG ====='
+          cat /home/pi/nexarm-buttons/strawberry-v4-last.log 2>/dev/null || true
+          echo '===== HOST PROCESSES ====='
+          ps -ef | grep -E 'strawberry_v4|CAPSUNA V4' | grep -v grep || true
+          echo '===== CONTAINER PROCESSES ====='
+          docker exec nexarm bash -lc "ps -ef | grep -E 'strawberry_v4|strawberry_autopick_v4' | grep -v grep || true"
+          echo '===== DESKTOP ====='
+          cat /home/pi/Desktop/CAPSUNA-V4.desktop 2>/dev/null || true
+          echo '===== WRAPPER ====='
+          cat /home/pi/nexarm-buttons/strawberry_v4.sh 2>/dev/null || true
