@@ -98,15 +98,15 @@ start_custom() {
   docker exec -d --user ubuntu "$CONTAINER" bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; exec /opt/ros/humble/bin/ros2 launch deptrum-ros-driver-aurora930 aurora930_launch.py >>/tmp/nexarm-custom-camera.log 2>&1'
   docker exec -d --user ubuntu "$CONTAINER" bash -lc 'export CHASSIS_TYPE=None; source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; exec /opt/ros/humble/bin/ros2 launch sdk nexarm.launch.py >>/tmp/nexarm-custom-controller.log 2>&1'
 
-  for ((i=0;i<80;i++)); do
-    if pgrep_exact "$CUSTOM_CAM" && pgrep_exact "$CUSTOM_CTRL"; then
-      if verify_custom; then
-        echo CUSTOM_READY
-        return 0
-      fi
-    fi
+  ready=0
+  for ((i=0;i<40;i++)); do
+    if pgrep_exact "$CUSTOM_CAM" && pgrep_exact "$CUSTOM_CTRL"; then ready=1; break; fi
     sleep 0.25
   done
+  if ((ready==1)) && verify_custom; then
+    echo CUSTOM_READY
+    return 0
+  fi
 
   echo CUSTOM_VERIFY_FAILED_ROLLING_BACK
   stop_custom || true
