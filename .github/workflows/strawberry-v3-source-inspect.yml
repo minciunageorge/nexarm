@@ -17,12 +17,10 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/strawberry-v3-source
           docker exec nexarm bash -lc 'cat /home/ubuntu/ros2_ws/src/example/example/rgbd_function/include/track_and_grab.py' > artifacts/strawberry-v3-source/track_and_grab.py
-          docker exec nexarm bash -lc 'find /home/ubuntu/ros2_ws/src -type f \( -name "*hand*eye*.yaml" -o -name "*calibration*.yaml" -o -name "transform.yaml" \) -print' > artifacts/strawberry-v3-source/config-paths.txt
-          while IFS= read -r f; do
-            [ -n "$f" ] || continue
-            b=$(basename "$f")
-            docker exec nexarm bash -lc "cat '$f'" > "artifacts/strawberry-v3-source/${b}.txt" 2>/dev/null || true
-          done < artifacts/strawberry-v3-source/config-paths.txt
+          docker exec nexarm bash -lc 'cat /home/ubuntu/ros2_ws/src/example/example/rgbd_function/include/utils.py' > artifacts/strawberry-v3-source/utils.py
+          docker exec nexarm bash -lc 'cat /home/ubuntu/ros2_ws/src/peripherals/config/camera_info.yaml' > artifacts/strawberry-v3-source/camera_info.yaml
+          docker exec nexarm bash -lc 'cat /home/ubuntu/ros2_ws/src/app/config/calibration.yaml' > artifacts/strawberry-v3-source/calibration.yaml
+          docker exec nexarm bash -lc 'cat /home/ubuntu/ros2_ws/src/app/config/transform.yaml' > artifacts/strawberry-v3-source/transform.yaml
       - name: Upload source artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
