@@ -1,0 +1,34 @@
+name: Inspect strawberry v2 sources
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/strawberry-v2-inspect.yml']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 5
+    steps:
+      - name: Collect current and official source files read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf artifacts/strawberry-v2-inspect
+          mkdir -p artifacts/strawberry-v2-inspect
+          cp /home/pi/nexarm-buttons/strawberry.py artifacts/strawberry-v2-inspect/current-strawberry.py
+          cp /home/pi/nexarm-buttons/strawberry.sh artifacts/strawberry-v2-inspect/current-strawberry.sh || true
+          docker exec nexarm bash -lc "find /home/ubuntu/ros2_ws/src -type f \( -name 'pick_and_place.py' -o -name 'calculate_grasp_yaw.py' -o -name 'kinematics_control.py' \) -print" > artifacts/strawberry-v2-inspect/official-paths.txt
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            base=$(basename "$f")
+            docker exec nexarm bash -lc "cat '$f'" > "artifacts/strawberry-v2-inspect/$base"
+          done < artifacts/strawberry-v2-inspect/official-paths.txt
+          docker exec nexarm bash -lc "cat /home/ubuntu/ros2_ws/src/app/config/calibration.yaml" > artifacts/strawberry-v2-inspect/calibration.yaml
+          docker exec nexarm bash -lc "cat /home/ubuntu/ros2_ws/src/app/config/transform.yaml" > artifacts/strawberry-v2-inspect/transform.yaml
+      - name: Upload inspection artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: strawberry-v2-inspect-${{ github.run_id }}
+          path: artifacts/strawberry-v2-inspect/
+          retention-days: 7
