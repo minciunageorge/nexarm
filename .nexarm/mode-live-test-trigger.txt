@@ -1,0 +1,1 @@
+trigger 2026-10-30 first-live-camera-only-test
