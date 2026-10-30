@@ -1,0 +1,39 @@
+name: Deploy NexArm mode switch
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/mode/**'
+      - '.github/workflows/mode-deploy.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: nexarm-mode-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Syntax check
+        run: |
+          bash -n deploy/mode/nexarm-mode.sh
+          bash -n deploy/mode/start-arm.sh
+          bash -n deploy/mode/stop-arm.sh
+      - name: Preserve current button scripts once
+        run: |
+          mkdir -p /home/pi/nexarm-buttons
+          [ ! -e /home/pi/nexarm-buttons/start-arm.sh ] || cp -n /home/pi/nexarm-buttons/start-arm.sh /home/pi/nexarm-buttons/start-arm.sh.before-github
+          [ ! -e /home/pi/nexarm-buttons/stop-arm.sh ] || cp -n /home/pi/nexarm-buttons/stop-arm.sh /home/pi/nexarm-buttons/stop-arm.sh.before-github
+      - name: Install fixed mode switch
+        run: |
+          install -m 0755 deploy/mode/nexarm-mode.sh /home/pi/nexarm-buttons/nexarm-mode.sh
+          install -m 0755 deploy/mode/start-arm.sh /home/pi/nexarm-buttons/start-arm.sh
+          install -m 0755 deploy/mode/stop-arm.sh /home/pi/nexarm-buttons/stop-arm.sh
+      - name: Read current mode only
+        run: /home/pi/nexarm-buttons/nexarm-mode.sh status
