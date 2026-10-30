@@ -26,3 +26,4 @@ jobs:
           cat /home/pi/Desktop/CAPSUNA-V4.desktop 2>/dev/null || true
           echo '===== WRAPPER ====='
           cat /home/pi/nexarm-buttons/strawberry_v4.sh 2>/dev/null || true
+# rerun 2026-10-30T18:10Z
