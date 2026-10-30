@@ -25,6 +25,8 @@ jobs:
           docker exec nexarm bash -lc 'cat /home/ubuntu/ros2_ws/src/peripherals/launch/include/aurora930.launch.py' > artifacts/aurora-inspect/hiwonder_aurora930.launch.py
           docker exec nexarm bash -lc 'cat /home/ubuntu/third_party_ros2/third_party_ws/src/deptrum-ros-driver-aurora930-0.2.1001/launch_aurora930/launch/aurora930_launch.py' > artifacts/aurora-inspect/deptrum_direct_aurora930.launch.py
           docker exec nexarm bash -lc 'for p in /proc/[0-9]*; do c=$(cat "$p/comm" 2>/dev/null || true); if [ "$c" = aurora930_node ]; then printf "PID=%s\n" "${p##*/}"; tr "\0" " " < "$p/cmdline" 2>/dev/null || true; printf "\nPPID="; awk "/^PPid:/{print \$2}" "$p/status" 2>/dev/null || true; fi; done' > artifacts/aurora-inspect/aurora-process.txt
+          tail -n 200 /home/pi/nexarm-buttons/mode-switch.log > artifacts/aurora-inspect/mode-switch.log 2>&1 || true
+          /home/pi/nexarm-buttons/nexarm-mode.sh status > artifacts/aurora-inspect/mode-status.txt 2>&1 || true
       - name: Upload inspection
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
