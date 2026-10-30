@@ -24,8 +24,10 @@ jobs:
             base=$(basename "$f")
             docker exec nexarm bash -lc "cat '$f'" > "artifacts/strawberry-v2-inspect/$base"
           done < artifacts/strawberry-v2-inspect/official-paths.txt
+          docker exec nexarm bash -lc "cat /home/ubuntu/ros2_ws/src/app/app/calibrated_pose.py" > artifacts/strawberry-v2-inspect/calibrated_pose.py
           docker exec nexarm bash -lc "cat /home/ubuntu/ros2_ws/src/app/config/calibration.yaml" > artifacts/strawberry-v2-inspect/calibration.yaml
           docker exec nexarm bash -lc "cat /home/ubuntu/ros2_ws/src/app/config/transform.yaml" > artifacts/strawberry-v2-inspect/transform.yaml
+          docker exec nexarm bash -lc "cat /home/ubuntu/ros2_ws/src/app/config/calibration_scene.yaml" > artifacts/strawberry-v2-inspect/calibration_scene.yaml || true
       - name: Upload inspection artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
