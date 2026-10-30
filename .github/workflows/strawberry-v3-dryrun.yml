@@ -1,0 +1,32 @@
+name: CAPSUNA V3 RGBD dry-run
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/strawberry-v3/**'
+      - '.github/workflows/strawberry-v3-dryrun.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  dryrun:
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Syntax check
+        run: python3 -m py_compile deploy/strawberry-v3/strawberry_v3.py
+      - name: Run V3 RGBD logic with movement disabled
+        run: |
+          set -euo pipefail
+          docker cp deploy/strawberry-v3/strawberry_v3.py nexarm:/tmp/strawberry_v3_dryrun.py >/dev/null
+          timeout 30 docker exec -e CAPSUNA_V3_MOVE=0 nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; python3 /tmp/strawberry_v3_dryrun.py' | tee strawberry-v3-dryrun.log
+      - name: Upload dry-run log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: strawberry-v3-dryrun-${{ github.run_id }}
+          path: strawberry-v3-dryrun.log
+          retention-days: 7
