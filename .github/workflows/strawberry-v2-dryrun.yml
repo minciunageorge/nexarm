@@ -1,0 +1,22 @@
+name: CAPSUNA V2 dry-run vision
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/strawberry-v2-dryrun.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  dryrun:
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 2
+    steps:
+      - name: Run vision with arm commands remapped to unused topic
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker cp /home/pi/nexarm-buttons/strawberry_v2.py nexarm:/tmp/strawberry_v2_dryrun.py >/dev/null
+          timeout 20 docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; python3 /tmp/strawberry_v2_dryrun.py --ros-args -r /ros_robot_controller/arm/set_coords:=/capsuna_v2_dry_run' | tee /home/pi/nexarm-buttons/strawberry-v2-dryrun.log || true
+      - name: Show dry-run result
+        run: |
+          tail -n 80 /home/pi/nexarm-buttons/strawberry-v2-dryrun.log || true
