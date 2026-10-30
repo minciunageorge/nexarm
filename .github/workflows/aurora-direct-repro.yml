@@ -1,0 +1,50 @@
+name: Aurora exact direct-launch reproduction
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.nexarm/aurora-direct-repro-trigger.txt'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: aurora-direct-repro
+  cancel-in-progress: false
+jobs:
+  repro:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 3
+    steps:
+      - name: Reproduce known-good direct launcher and restore factory
+        shell: bash
+        run: |
+          set -u
+          OUT=/home/pi/aurora-direct-repro
+          rm -rf "$OUT" && mkdir -p "$OUT"
+          pid=$(docker exec nexarm bash -lc 'for p in $(pgrep -u ubuntu -x aurora930_node 2>/dev/null || true); do c=$(tr "\0" " " < /proc/$p/cmdline 2>/dev/null || true); case "$c" in *"/depth_cam/rgb/image_raw"*) echo "$p"; exit 0;; esac; done; exit 1') || { echo factory-camera-not-found > "$OUT/result.txt"; exit 1; }
+          docker exec nexarm bash -lc "cat /proc/$pid/cmdline > /tmp/aurora-direct-repro-factory.cmdline"
+          docker exec nexarm kill -INT "$pid" || true
+          for i in $(seq 1 40); do docker exec nexarm test -e "/proc/$pid" || break; sleep 0.25; done
+          sleep 2
+          docker exec nexarm bash -lc ': > /tmp/aurora-direct-repro.log'
+          docker exec -d nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; ros2 launch deptrum-ros-driver-aurora930 aurora930_launch.py >/tmp/aurora-direct-repro.log 2>&1'
+          sleep 4
+          docker exec nexarm ps -eo pid,ppid,user,stat,args | grep -E 'aurora930_node|ros2 launch deptrum' | grep -v grep > "$OUT/processes-direct.txt" || true
+          docker exec nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; timeout 6 ros2 topic hz /aurora/rgb/image_raw' > "$OUT/hz.txt" 2>&1 || true
+          docker exec nexarm bash -lc 'cat /tmp/aurora-direct-repro.log' > "$OUT/direct.log" 2>&1 || true
+          docker exec nexarm bash -lc 'p=$(pgrep -u root -f "^/usr/bin/python3 /opt/ros/humble/bin/ros2 launch deptrum-ros-driver-aurora930 aurora930_launch.py$" || true); [ -z "$p" ] || kill -INT $p' || true
+          sleep 2
+          docker exec nexarm bash -lc 'for p in $(pgrep -u root -x aurora930_node 2>/dev/null || true); do c=$(tr "\0" " " < /proc/$p/cmdline 2>/dev/null || true); case "$c" in *"/depth_cam/rgb/image_raw"*) ;; *) kill -INT "$p" 2>/dev/null || true;; esac; done' || true
+          sleep 1
+          docker exec -d --user ubuntu nexarm bash -lc 'source /opt/ros/humble/setup.bash; source /home/ubuntu/third_party_ros2/third_party_ws/install/setup.bash; source /home/ubuntu/ros2_ws/install/setup.bash; python3 -c '\''import os; raw=open("/tmp/aurora-direct-repro-factory.cmdline","rb").read().split(b"\0"); a=[x.decode() for x in raw if x]; os.execv(a[0],a)'\'' >/tmp/aurora-direct-repro-factory.log 2>&1'
+          sleep 3
+          docker exec nexarm ps -eo pid,ppid,user,stat,args | grep -E 'aurora930_node|ros_robot_controller|bringup.launch.py' | grep -v grep > "$OUT/processes-after-restore.txt" || true
+          grep -q 'average rate' "$OUT/hz.txt"
+      - name: Upload reproduction evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: aurora-direct-repro-${{ github.run_id }}
+          path: /home/pi/aurora-direct-repro/
+          retention-days: 7
