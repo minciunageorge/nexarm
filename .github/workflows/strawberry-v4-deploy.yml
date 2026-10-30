@@ -48,7 +48,8 @@ jobs:
           test -x /home/pi/nexarm-buttons/strawberry_v4.sh
           test -f /home/pi/nexarm-buttons/strawberry_v4.py
           test -x /home/pi/Desktop/CAPSUNA-V4.desktop
-          grep -q 'GREEN_LOW = np.array(\[20, 10, 10\]' /home/pi/nexarm-buttons/strawberry_v4.py
-          grep -q 'green_dominant' /home/pi/nexarm-buttons/strawberry_v4.py
+          grep -q 'WEAK_GREEN_LOW' /home/pi/nexarm-buttons/strawberry_v4.py
+          grep -q 'V4 CONSENSUS' /home/pi/nexarm-buttons/strawberry_v4.py
+          grep -q 'WIRE_RHO_TOL_PX' /home/pi/nexarm-buttons/strawberry_v4.py
           python3 -m py_compile /home/pi/nexarm-buttons/strawberry_v4.py
-          echo CAPSUNA_V4_UPDATED_AND_INSTALLED
+          echo CAPSUNA_V4_TEMPORAL_GREEN_CONSENSUS_INSTALLED
