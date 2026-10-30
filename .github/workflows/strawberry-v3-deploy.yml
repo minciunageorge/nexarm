@@ -1,0 +1,45 @@
+name: Deploy CAPSUNA V3 button
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/strawberry-v3/**'
+      - '.github/workflows/strawberry-v3-deploy.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: nexarm-strawberry-v3-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Syntax check only
+        run: |
+          python3 -m py_compile deploy/strawberry-v3/strawberry_v3.py
+          bash -n deploy/strawberry-v3/strawberry_v3.sh
+      - name: Install V3 without touching old buttons
+        run: |
+          mkdir -p /home/pi/nexarm-buttons
+          install -m 0644 deploy/strawberry-v3/strawberry_v3.py /home/pi/nexarm-buttons/strawberry_v3.py
+          install -m 0755 deploy/strawberry-v3/strawberry_v3.sh /home/pi/nexarm-buttons/strawberry_v3.sh
+      - name: Create separate desktop button
+        run: |
+          test -f /home/pi/Desktop/CAPSUNA.desktop
+          cp -a /home/pi/Desktop/CAPSUNA.desktop /home/pi/Desktop/CAPSUNA-V3.desktop
+          sed -i 's|^Name=.*|Name=CAPSUNA V3|' /home/pi/Desktop/CAPSUNA-V3.desktop
+          sed -i 's|^Exec=.*|Exec=/home/pi/nexarm-buttons/strawberry_v3.sh|' /home/pi/Desktop/CAPSUNA-V3.desktop
+          chmod +x /home/pi/Desktop/CAPSUNA-V3.desktop
+          gio set /home/pi/Desktop/CAPSUNA-V3.desktop metadata::trusted true >/dev/null 2>&1 || true
+      - name: Verify install without executing robot code
+        run: |
+          test -x /home/pi/nexarm-buttons/strawberry_v3.sh
+          test -f /home/pi/nexarm-buttons/strawberry_v3.py
+          grep '^Name=CAPSUNA V3$' /home/pi/Desktop/CAPSUNA-V3.desktop
+          grep '^Exec=/home/pi/nexarm-buttons/strawberry_v3.sh$' /home/pi/Desktop/CAPSUNA-V3.desktop
+          echo CAPSUNA_V3_INSTALLED
