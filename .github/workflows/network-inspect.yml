@@ -1,0 +1,28 @@
+name: Inspect NexArm network
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/network-inspect.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 3
+    steps:
+      - name: Inspect active NetworkManager state
+        shell: bash
+        run: |
+          set -u
+          echo '===== ACTIVE CONNECTIONS ====='
+          nmcli -t -f NAME,UUID,TYPE,DEVICE con show --active || true
+          echo '===== WIFI DEVICE ====='
+          nmcli -f GENERAL.DEVICE,GENERAL.CONNECTION,IP4.ADDRESS,IP4.GATEWAY device show wlan0 || true
+          echo '===== HALA RADOVANU PROFILE ====='
+          nmcli -f connection.id,connection.uuid,connection.interface-name,ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns con show 'Hala Radovanu' || true
+          echo '===== ALL WIFI PROFILES ====='
+          nmcli -t -f NAME,UUID,TYPE,DEVICE con show | grep ':802-11-wireless:' || true
+          echo '===== SUDO TEST ====='
+          sudo -n true && echo SUDO_NONINTERACTIVE_OK || echo SUDO_NONINTERACTIVE_NO
