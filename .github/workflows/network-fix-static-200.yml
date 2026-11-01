@@ -1,0 +1,33 @@
+name: Fix NexArm static IP 192.168.100.200
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/network-fix-static-200.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fix:
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 5
+    steps:
+      - name: Persist static IP and reactivate profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROFILE='Hala Radovanu'
+          echo 'BEFORE:'
+          nmcli -f ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns con show "$PROFILE"
+          sudo -n nmcli con mod "$PROFILE" \
+            ipv4.method manual \
+            ipv4.addresses '192.168.100.200/24' \
+            ipv4.gateway '192.168.100.1' \
+            ipv4.dns '1.1.1.1 8.8.8.8'
+          echo 'PERSISTED:'
+          nmcli -f ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns con show "$PROFILE"
+          # Reactivation may briefly disconnect this runner; the profile is already persisted.
+          sudo -n nmcli con up "$PROFILE" ifname wlan0 || true
+          sleep 2
+          echo 'ACTIVE:'
+          nmcli -f GENERAL.CONNECTION,IP4.ADDRESS,IP4.GATEWAY device show wlan0 || true
