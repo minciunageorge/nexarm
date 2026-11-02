@@ -1,0 +1,37 @@
+name: Inspect NexArm network profile recreation
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/network-rootcause.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 5
+    steps:
+      - name: Inspect profile origin without exposing Wi-Fi secrets
+        shell: bash
+        run: |
+          set -u
+          echo '===== ACTIVE PROFILE ====='
+          nmcli -f connection.id,connection.uuid,connection.autoconnect,connection.interface-name,802-11-wireless.ssid,ipv4.method,ipv4.addresses,ipv4.gateway con show 'Hala Radovanu' || true
+          echo '===== SYSTEM CONNECTION FILES ====='
+          sudo -n find /etc/NetworkManager/system-connections -maxdepth 1 -type f -printf '%TY-%Tm-%Td %TH:%TM:%TS %p\n' 2>/dev/null | sort || true
+          echo '===== HALA PROFILE FILE NAMES / NONSECRET KEYS ====='
+          for f in /etc/NetworkManager/system-connections/*; do
+            [ -f "$f" ] || continue
+            if sudo -n grep -q '^id=Hala Radovanu$' "$f" 2>/dev/null; then
+              echo "FILE=$f"
+              sudo -n grep -E '^(id|uuid|type|interface-name|method|address1|gateway|autoconnect)=' "$f" 2>/dev/null || true
+              sudo -n stat -c 'mtime=%y owner=%U:%G mode=%a' "$f" 2>/dev/null || true
+            fi
+          done
+          echo '===== NETWORKMANAGER CONFIG ====='
+          sudo -n grep -R -n -E 'managed|keyfile|ifupdown|wifi|connection' /etc/NetworkManager/NetworkManager.conf /etc/NetworkManager/conf.d 2>/dev/null || true
+          echo '===== BOOT/SYSTEMD REFERENCES TO NETWORK OR SSID ====='
+          sudo -n grep -R -n -E 'Hala Radovanu|nmcli|NetworkManager|192\.168\.100\.' /etc/systemd/system /usr/lib/systemd/system /home/pi/.config/autostart /home/pi/.local 2>/dev/null | head -n 200 || true
+          echo '===== RECENT NETWORKMANAGER JOURNAL (FILTERED) ====='
+          sudo -n journalctl -b -u NetworkManager --no-pager 2>/dev/null | grep -E 'Hala Radovanu|wlan0|connection|profile' | tail -n 160 || true
