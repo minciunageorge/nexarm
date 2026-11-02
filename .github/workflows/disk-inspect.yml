@@ -1,0 +1,30 @@
+name: Inspect NexArm disk usage
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/disk-inspect.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 5
+    steps:
+      - name: Inspect disk usage safely
+        shell: bash
+        run: |
+          set -u
+          echo '===== DF ====='
+          df -hT /
+          echo '===== TOP LEVEL ====='
+          sudo -n du -xhd1 / 2>/dev/null | sort -h | tail -n 30
+          echo '===== /home ====='
+          sudo -n du -xhd2 /home 2>/dev/null | sort -h | tail -n 40
+          echo '===== /var ====='
+          sudo -n du -xhd2 /var 2>/dev/null | sort -h | tail -n 40
+          echo '===== DOCKER ====='
+          docker system df || true
+          echo '===== LARGE FILES >500M ====='
+          sudo -n find / -xdev -type f -size +500M -printf '%s %p\n' 2>/dev/null | sort -nr | head -n 30 | awk '{printf "%.2f GB %s\n", $1/1073741824, $2}'
