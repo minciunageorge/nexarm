@@ -1,0 +1,75 @@
+name: Install NexArm static IP guard
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/install-static-ip-guard.yml'
+permissions:
+  contents: read
+jobs:
+  install:
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 5
+    steps:
+      - name: Install boot guard and fix current IP
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/nexarm-static-ip.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -u
+          NAME='Hala Radovanu'
+          DEV='wlan0'
+          ADDR='192.168.100.200/24'
+          GW='192.168.100.1'
+          DNS='1.1.1.1 8.8.8.8'
+
+          # Hiwonder wifi.py recreates the profile a few seconds after boot.
+          # Wait for that freshly-created profile to become active, then convert
+          # that exact UUID to a static profile and reactivate it once.
+          for _ in $(seq 1 90); do
+            UUID=$(nmcli -t -f NAME,UUID,DEVICE con show --active 2>/dev/null | awk -F: -v n="$NAME" -v d="$DEV" '$1==n && $3==d {print $2; exit}')
+            if [ -n "${UUID:-}" ]; then
+              sleep 2
+              UUID2=$(nmcli -t -f NAME,UUID,DEVICE con show --active 2>/dev/null | awk -F: -v n="$NAME" -v d="$DEV" '$1==n && $3==d {print $2; exit}')
+              [ -n "${UUID2:-}" ] || continue
+              UUID="$UUID2"
+              METHOD=$(nmcli -g ipv4.method con show uuid "$UUID" 2>/dev/null || true)
+              CURADDR=$(nmcli -g ipv4.addresses con show uuid "$UUID" 2>/dev/null || true)
+              if [ "$METHOD" = manual ] && printf '%s' "$CURADDR" | grep -q '192.168.100.200/24'; then
+                exit 0
+              fi
+              nmcli con mod uuid "$UUID" ipv4.method manual ipv4.addresses "$ADDR" ipv4.gateway "$GW" ipv4.dns "$DNS"
+              nmcli con up uuid "$UUID" ifname "$DEV" >/tmp/nexarm-static-ip-nmcli.log 2>&1 || true
+              sleep 3
+              ip -4 addr show dev "$DEV" | grep -q '192.168.100.200/24' && exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+          EOF
+          sudo -n install -o root -g root -m 0755 /tmp/nexarm-static-ip.sh /usr/local/sbin/nexarm-static-ip.sh
+
+          cat > /tmp/nexarm-static-ip.service <<'EOF'
+          [Unit]
+          Description=Restore NexArm static Wi-Fi IP after Hiwonder wifi.py
+          After=NetworkManager.service wifi.service
+          Wants=NetworkManager.service
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/nexarm-static-ip.sh
+          TimeoutStartSec=120
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          sudo -n install -o root -g root -m 0644 /tmp/nexarm-static-ip.service /etc/systemd/system/nexarm-static-ip.service
+          sudo -n systemctl daemon-reload
+          sudo -n systemctl enable nexarm-static-ip.service
+          sudo -n systemctl restart nexarm-static-ip.service
+          sleep 3
+          echo '===== VERIFY ====='
+          nmcli -f GENERAL.CONNECTION,IP4.ADDRESS,IP4.GATEWAY device show wlan0 || true
+          nmcli -f connection.id,connection.uuid,ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns con show 'Hala Radovanu' || true
+          sudo -n systemctl status nexarm-static-ip.service --no-pager -l || true
