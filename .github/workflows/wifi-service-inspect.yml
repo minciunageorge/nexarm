@@ -1,0 +1,29 @@
+name: Inspect Hiwonder wifi service
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/wifi-service-inspect.yml'
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: [self-hosted, Linux, ARM64, nexarm-readonly]
+    timeout-minutes: 3
+    steps:
+      - name: Inspect wifi service and launcher
+        shell: bash
+        run: |
+          set -u
+          echo '===== WIFI SERVICE ====='
+          sudo -n systemctl cat wifi.service || true
+          sudo -n systemctl status wifi.service --no-pager -l || true
+          echo '===== FIND DEVICE ====='
+          sudo -n systemctl cat find_device.service || true
+          echo '===== REMOTE ====='
+          sudo -n systemctl cat remote.service || true
+          echo '===== EXECSTART TARGETS ====='
+          for s in wifi.service find_device.service remote.service; do
+            cmd=$(systemctl show -p ExecStart --value "$s" 2>/dev/null || true)
+            echo "$s: $cmd"
+          done
